@@ -1,0 +1,215 @@
+---
+layout: ../../layouts/DocLayout.astro
+title: "Les bases du DOM"
+draft: true
+description: "Comprendre le Document Object Model : l'arbre des éléments, la sélection, la manipulation, et le lien entre HTML et JavaScript."
+---
+
+import MarginNote from "../../components/MarginNote.astro";
+import Highlight from "../../components/Highlight.astro";
+import Checkpoint from "../../components/Checkpoint.astro";
+import DomInspector from "../../components/react/DomInspector.jsx";
+
+<MarginNote type="prerequis">
+Ce guide suppose une familiarité avec HTML (balises, attributs) et les bases de JavaScript (variables, fonctions, objets). Il établit le lien entre les deux.
+</MarginNote>
+
+## Qu'est-ce que le DOM ?
+
+Quand un navigateur charge une page HTML, il n'en conserve pas le texte tel quel. Il le lit et en construit une **représentation en mémoire** : une structure d'objets que JavaScript peut lire et modifier. Cette structure est le **DOM**.
+
+<MarginNote type="definition" titre="DOM">
+*Document Object Model*, une représentation en mémoire de la page sous forme d'arbre d'objets. Chaque balise HTML devient un **nœud** (*node*) que JavaScript peut inspecter, modifier, créer ou supprimer.
+</MarginNote>
+
+Une fois la page chargée, on ne manipule plus le HTML mais le DOM. Cette distinction explique qu'une page puisse changer sans être rechargée : modifier le DOM met aussitôt à jour ce que voit l'utilisateur.
+
+### Le pont entre deux mondes
+
+JavaScript est un langage (variables, fonctions, objets) et HTML une structure de page. Le DOM est <Highlight couleur="ambre">l'interface qui relie les deux</Highlight> : il expose chaque élément HTML comme un objet JavaScript, doté de propriétés (son texte, ses attributs, ses enfants) et de méthodes (le modifier, lui attacher un écouteur d'événement).
+
+---
+
+## L'arbre du document
+
+Le terme « arbre » désigne une structure précise : chaque élément a **un parent** et peut avoir **des enfants**, et l'ensemble descend d'une racine unique (`<html>`), comme une arborescence de fichiers descend d'un dossier racine.
+
+L'exemple ci-dessous montre une carte affichant une boîte à livres. À gauche, ce que voit l'utilisateur ; à droite, l'arbre DOM correspondant. Survoler un élément d'un côté illumine son jumeau de l'autre ; cliquer sur un nœud affiche ses détails.
+
+<DomInspector client:visible />
+
+Cet inspecteur reproduit ce que fait l'onglet **Elements** (ou **Inspecteur**) des outils de développement du navigateur. <Highlight>Chaque chose visible à l'écran correspond à un nœud de l'arbre</Highlight>, et inversement. Savoir circuler entre ces deux vues est une compétence de base du développement web.
+
+<MarginNote type="astuce" titre="Les outils de développement">
+Dans la plupart des navigateurs, un clic droit sur un élément puis « Inspecter » (ou la touche `F12`) affiche le véritable arbre DOM de la page, comme dans l'inspecteur ci-dessus, mais pour la page entière.
+</MarginNote>
+
+### Vocabulaire de l'arbre
+
+- **Nœud (node)** : tout élément de l'arbre, une balise, mais aussi le texte qu'elle contient ou un commentaire.
+- **Élément (element)** : un nœud qui est une balise HTML (`<p>`, `<div>`, `<a>`).
+- **Parent** : le nœud qui en contient directement un autre.
+- **Enfant (child)** : un nœud contenu directement dans un autre.
+- **Frères (siblings)** : des nœuds qui partagent le même parent.
+- **Racine (root)** : le sommet de l'arbre, l'élément `<html>`.
+
+<Checkpoint question="Dans la carte ci-dessus, quel est le parent des trois <li> ? Et leurs frères ?">
+Le parent des trois `<li>` est le `<ul>` (la liste des tags). Les trois `<li>` sont frères entre eux, car ils partagent le même parent. Le `<ul>` est l'enfant de `<article>` et le frère de `<h2>`, `<p>` et `<a>`.
+</Checkpoint>
+
+---
+
+## Sélectionner des éléments
+
+Pour modifier un élément, il faut d'abord l'**atteindre** depuis JavaScript. Le DOM fournit des méthodes de sélection. Les deux méthodes modernes, employées presque toujours, prennent un **sélecteur CSS** :
+
+```js
+// Le premier élément qui correspond au sélecteur CSS
+const titre = document.querySelector(".carte__titre");
+
+// Tous les éléments qui correspondent (une NodeList)
+const tags = document.querySelectorAll(".carte__tags li");
+```
+
+<MarginNote type="astuce" titre="Le sélecteur CSS, partout">
+Un sélecteur CSS (`.classe`, `#id`, `article > p`, `a[href]`) s'utilise tel quel dans le DOM : `querySelector` accepte la même syntaxe que les feuilles de style.
+</MarginNote>
+
+Des méthodes plus anciennes restent répandues dans le code existant :
+
+```js
+document.getElementById("menu");           // par id (sans le #)
+document.getElementsByClassName("carte");  // par classe (collection live)
+document.getElementsByTagName("li");       // par balise
+```
+
+<Highlight couleur="ambre">Dans du code récent, on préfère `querySelector` et `querySelectorAll`</Highlight> : une seule syntaxe à retenir, identique à celle de CSS.
+
+### `querySelector` vs `querySelectorAll`
+
+| | Retourne | Si rien ne correspond |
+|---|---|---|
+| `querySelector(sel)` | le **premier** élément (ou `null`) | `null` |
+| `querySelectorAll(sel)` | **tous** les éléments (une `NodeList`) | `NodeList` vide |
+
+Une `NodeList` ressemble à un tableau et s'itère avec `for...of` ou `forEach`, sans en être tout à fait un. Pour utiliser `map` ou `filter`, on la convertit d'abord avec `Array.from(tags)` ou `[...tags]`.
+
+<Checkpoint question="Pourquoi const x = document.querySelector('.inexistant') ne plante-t-il pas, mais x.textContent plante-t-il ?">
+`querySelector` retourne `null` quand aucun élément ne correspond, ce qui ne lève pas d'erreur. Mais `null.textContent` plante, car `null` n'a pas de propriété `textContent`. C'est l'erreur `Cannot read properties of null` la plus fréquente en DOM. Il faut toujours vérifier que la sélection a réussi avant d'utiliser le résultat, surtout si l'élément pourrait ne pas exister.
+</Checkpoint>
+
+---
+
+## Lire et modifier un élément
+
+Une fois un élément sélectionné, on accède à ses propriétés comme à celles de n'importe quel objet JavaScript.
+
+### Le contenu
+
+```js
+const titre = document.querySelector(".carte__titre");
+
+titre.textContent = "Nouvelle boîte";     // remplace le texte
+titre.textContent;                         // lit le texte actuel
+```
+
+<MarginNote type="erreur" titre="textContent vs innerHTML">
+`textContent` traite tout comme du texte brut, ce qui est sûr. `innerHTML` interprète le contenu comme du HTML : pratique, mais **dangereux** avec des données venant de l'utilisateur, car c'est la porte d'entrée des attaques XSS (injection de scripts). Par défaut, on utilise `textContent`.
+</MarginNote>
+
+### Les attributs
+
+```js
+const lien = document.querySelector(".carte__lien");
+
+lien.getAttribute("href");              // lire un attribut
+lien.setAttribute("href", "/boites/7"); // modifier un attribut
+lien.href = "/boites/7";                // raccourci pour les attributs courants
+```
+
+### Les classes CSS
+
+La propriété `classList` est la façon idiomatique de manipuler les classes, donc l'apparence :
+
+```js
+const carte = document.querySelector(".carte");
+
+carte.classList.add("active");        // ajouter une classe
+carte.classList.remove("active");     // retirer
+carte.classList.toggle("active");     // basculer (ajoute si absente, retire si présente)
+carte.classList.contains("active");   // tester (true / false)
+```
+
+<Highlight>Modifier les classes plutôt que les styles directement</Highlight> garde la logique d'apparence dans le CSS. JavaScript décide *quand* une classe s'applique, CSS décide *à quoi elle ressemble*.
+
+---
+
+## Créer et insérer des éléments
+
+On peut fabriquer de nouveaux nœuds et les greffer dans l'arbre :
+
+```js
+// 1. Créer l'élément
+const nouveauTag = document.createElement("li");
+nouveauTag.textContent = "poésie";
+
+// 2. L'insérer dans le DOM
+const liste = document.querySelector(".carte__tags");
+liste.appendChild(nouveauTag);        // ajoute à la fin des enfants
+```
+
+Tant qu'un élément créé n'est pas inséré dans l'arbre, il existe en mémoire mais <Highlight couleur="violet">n'apparaît nulle part à l'écran</Highlight> : il reste détaché. C'est l'insertion (`appendChild`, `prepend`, `before`, `after`) qui le rend visible.
+
+Pour retirer un élément :
+
+```js
+nouveauTag.remove();                  // se retire lui-même de l'arbre
+```
+
+<Checkpoint question="On a fait document.createElement('p') et défini son textContent, mais rien n'apparaît. Pourquoi ?">
+Parce que l'élément a été créé en mémoire mais jamais inséré dans l'arbre du document. Un élément créé est détaché : il faut l'attacher à un parent déjà présent dans le DOM avec `appendChild`, `prepend`, `before` ou `after` pour qu'il devienne visible. Créer n'est pas insérer.
+</Checkpoint>
+
+---
+
+## Réagir aux événements
+
+Le DOM ne sert pas qu'à modifier la page : il permet aussi de **réagir** à ce que fait l'utilisateur, qu'il s'agisse d'un clic, d'une frappe au clavier, d'un survol ou de la soumission d'un formulaire. On attache pour cela un *écouteur d'événement* (*event listener*) à un élément.
+
+```js
+const bouton = document.querySelector(".carte__lien");
+
+bouton.addEventListener("click", (evenement) => {
+  evenement.preventDefault();          // empêche le comportement par défaut
+  console.log("La boîte a été cliquée");
+});
+```
+
+`addEventListener` prend deux arguments : le **type** d'événement (`"click"`, `"input"`, `"submit"`, `"mouseover"`...) et une **fonction** exécutée quand il survient. Cette fonction reçoit un objet `evenement` décrivant ce qui s'est produit.
+
+<MarginNote type="definition" titre="Événement">
+Un signal émis par le navigateur quand quelque chose se produit : un clic, une touche pressée, le chargement de la page. Le code qui écoute cet événement (le *callback*) s'exécute en réaction.
+</MarginNote>
+
+Les pièces précédentes se combinent ici. <Highlight>Une page interactive forme une boucle : l'utilisateur agit, un événement se déclenche, JavaScript modifie le DOM, et l'affichage change.</Highlight>
+
+```js
+// Exemple complet : un compteur de clics
+const bouton = document.querySelector("#compteur");
+let clics = 0;
+
+bouton.addEventListener("click", () => {
+  clics++;
+  bouton.textContent = `Cliqué ${clics} fois`;
+});
+```
+
+<Checkpoint question="À quoi sert evenement.preventDefault() dans le clic sur un lien <a> ?">
+Un lien `<a href="...">` a un comportement par défaut : naviguer vers l'URL. `preventDefault()` annule ce comportement, ce qui permet d'exécuter du JavaScript à la place (par exemple afficher du contenu sans changer de page). Sans cet appel, le navigateur suivrait le lien et quitterait la page avant l'exécution du reste du code.
+</Checkpoint>
+
+---
+
+<MarginNote type="plusloin">
+La référence complète des méthodes du DOM est disponible sur [MDN](https://developer.mozilla.org/fr/docs/Web/API/Document_Object_Model). Pour expérimenter, on peut ouvrir la console du navigateur (`F12`) sur n'importe quelle page et y saisir `document.querySelector("h1")` : le résultat est un véritable nœud du DOM.
+</MarginNote>

@@ -1,0 +1,79 @@
+---
+// Exercice.astro — carte d'exercice réutilisable
+// Utilise les classes globales définies dans la page parente.
+const {
+  num,
+  type,
+  diff = 1,
+  titre,
+  enonce,
+  signature,
+  attendu,
+  avant,
+  indice,
+  solution,
+} = Astro.props;
+
+const dots = [0, 1, 2];
+---
+
+<article class="exo" id={`exo-${num}`}>
+  <header class="exo-head">
+    <div class="exo-meta">
+      <span class="exo-num">{num}</span>
+      <span class="exo-type">{type}</span>
+      <span class="exo-diff" aria-label={`Difficulté ${diff} sur 3`}>
+        {dots.map((i) => <span class={i < diff ? "d on" : "d"}></span>)}
+      </span>
+    </div>
+    <label class="exo-done">
+      <input type="checkbox" class="exo-check" data-exo={num} />
+      <span>Terminé</span>
+    </label>
+  </header>
+
+  <h3 class="exo-titre">{titre}</h3>
+  <p class="exo-enonce">{enonce}</p>
+
+  {signature && (
+    <div class="exo-sig">
+      <span class="exo-sig-k">Signature</span>
+      <code>{signature}</code>
+    </div>
+  )}
+
+  {attendu && (
+    <div class="code small">
+      <div class="code-head"><span class="fname">Résultat attendu</span></div>
+      <pre>{attendu}</pre>
+    </div>
+  )}
+
+  {avant && (
+    <div class="code small">
+      <div class="code-head">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="fname">Code à simplifier</span>
+      </div>
+      <pre>{avant}</pre>
+    </div>
+  )}
+
+  <details class="reveal hint">
+    <summary><span class="rev-ic">?</span>Indice</summary>
+    <div class="reveal-body"><p>{indice}</p></div>
+  </details>
+
+  <details class="reveal sol">
+    <summary><span class="rev-ic">{}</span>{avant ? "Voir la version simplifiée" : "Voir la solution"}</summary>
+    <div class="reveal-body">
+      <div class="code">
+        <div class="code-head">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="fname">{avant ? "après.php" : "solution.php"}</span>
+        </div>
+        <pre>{solution}</pre>
+      </div>
+    </div>
+  </details>
+</article>

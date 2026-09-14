@@ -1,0 +1,231 @@
+---
+layout: ../../layouts/DocLayout.astro
+title: "Le DOM avancé"
+draft: true
+description: "Aller plus loin avec le DOM : le cycle d'un événement (capture, cible, bouillonnement), la délégation, les formulaires, la liaison de données (one-way et two-way) et les templates."
+---
+
+import MarginNote from "../../components/MarginNote.astro";
+import Highlight from "../../components/Highlight.astro";
+import Checkpoint from "../../components/Checkpoint.astro";
+import EventPropagation from "../../components/react/EventPropagation.jsx";
+import TwoWayBinding from "../../components/react/TwoWayBinding.jsx";
+
+<MarginNote type="prerequis">
+Cette page fait suite à [Les bases du DOM](/guides/tuto-dom-1). On suppose que vous savez sélectionner, lire, modifier et créer des éléments, et attacher un écouteur simple avec `addEventListener`. On va maintenant plus loin : le cycle des événements, les formulaires, la liaison de données, les templates et les web components.
+</MarginNote>
+
+{/* Les bases permettent déjà de répondre à un clic et de modifier la page. Mais dès qu'une interface grandit, des questions se posent : dans quel ordre les gestionnaires se déclenchent-ils ? Comment éviter d'attacher un écouteur à chaque élément ? Comment garder les données et l'affichage cohérents ? Comment fabriquer ses propres éléments réutilisables ? C'est l'objet de cette page. */}
+
+Les bases du DOM permettent de sélectionner des éléments, de modifier leur contenu et de réagir à des actions simples de l'utilisateur. Ces opérations suffisent pour des pages très simples, mais elles deviennent rapidement insuffisantes lorsqu'une interface contient plusieurs boutons, formulaires, listes dynamiques ou composants réutilisables.
+
+Dans une interface plus complète, il faut comprendre comment les événements circulent dans la page, comment gérer efficacement plusieurs éléments semblables, comment lire et valider les données saisies par l'utilisateur, et comment maintenir une cohérence entre les données en mémoire et ce qui est affiché dans le navigateur.
+
+Cette page introduit ces notions avancées du DOM en les reliant à des problèmes fréquents de conception d'interfaces web.
+
+## 1. Le cycle d'un événement
+
+Lorsqu'un utilisateur clique sur un élément, le navigateur ne transmet pas simplement l'événement à cet élément isolé. 
+Comme les éléments HTML sont imbriqués dans l'arbre du DOM, l'événement est aussi relié aux éléments parents : une image peut être dans un bouton, lui-même dans une carte, elle-même dans une section.
+
+Pour gérer correctement les interactions, il faut donc comprendre le trajet d'un événement dans l'arbre du document. Ce trajet se déroule en trois phases.
+
+1. **Capture** : l'événement descend de la racine jusqu'à l'élément cliqué.
+2. **Cible** : il atteint l'élément effectivement cliqué.
+3. **Bouillonnement** : il remonte de la cible vers la racine.
+
+Par défaut, vos écouteurs réagissent à la phase de **bouillonnement**. Pour écouter en capture, on passe une option à `addEventListener`.
+
+<Highlight>Deux propriétés à ne jamais confondre : `event.target` est l'élément réellement cliqué, `event.currentTarget` est l'élément dont l'écouteur s'exécute en ce moment.</Highlight>
+
+Manipulez la séquence ci-dessous : activez la capture, ou coupez la remontée au parent, et observez l'ordre de déclenchement.
+
+<EventPropagation client:visible />
+
+```js
+// écouter en phase de capture (sinon, par défaut, c'est le bouillonnement)
+zone.addEventListener("click", gerer, { capture: true });
+
+enfant.addEventListener("click", (e) => {
+  console.log(e.target);        // l'élément cliqué
+  console.log(e.currentTarget); // l'élément qui écoute (ici, enfant)
+  e.stopPropagation();          // stoppe la suite de la propagation
+});
+
+// annuler l'action par défaut (navigation d'un lien, envoi d'un formulaire)
+lien.addEventListener("click", (e) => e.preventDefault());
+```
+
+`stopPropagation()` arrête le voyage de l'événement ; `preventDefault()` n'arrête pas le voyage, mais annule l'action que le navigateur ferait par défaut. Ce sont deux choses distinctes.
+
+{/* <MarginNote type="plusloin" titre="La boucle d'événements">
+Un gestionnaire ne s'exécute jamais « pendant » le clic : il est mis en file et traité quand la pile d'appels est vide. C'est la **boucle d'événements**. JavaScript exécute le code courant jusqu'au bout, puis prend la prochaine tâche en attente (un clic, un `setTimeout` échu, une réponse réseau). Les **microtâches** (les `.then` des promesses) passent avant les tâches ordinaires. C'est pourquoi un gestionnaire ne bloque pas la page, et pourquoi l'ordre d'exécution n'est pas toujours celui de l'écriture.
+</MarginNote> */}
+
+<Checkpoint question="Vous cliquez sur un bouton imbriqué dans une carte. Dans le gestionnaire posé sur la carte, que valent `event.target` et `event.currentTarget` ?">
+`event.target` est le **bouton** (l'élément réellement cliqué). `event.currentTarget` est la **carte** (l'élément dont l'écouteur s'exécute). C'est précisément cette distinction qui rend la délégation possible.
+</Checkpoint>
+
+## 2. La délégation d'événements
+
+Comme l'événement remonte par bouillonnement, on peut placer **un seul** écouteur sur un parent plutôt qu'un par enfant. Le parent inspecte `event.target` pour savoir d'où vient le clic. 
+On retrouve l'élément utile avec `closest()`.
+
+Supposons qu'une page affiche une liste de livres. Une première approche consisterait à ajouter un écouteur `click` sur chaque élément `<li>`. 
+Cette approche fonctionne, mais elle devient vite répétitive. Elle pose aussi un problème lorsque de nouveaux livres sont ajoutés dynamiquement : il faut penser à leur attacher de nouveaux écouteurs.
+
+La délégation d'événements consiste à déplacer l'écouteur vers un élément parent stable, par exemple la liste complète. 
+Le parent reçoit les clics qui remontent par bouillonnement et détermine ensuite quel élément enfant a été visé.
+
+```js
+const liste = document.querySelector("#livres");
+
+liste.addEventListener("click", (e) => {
+  const item = e.target.closest("li"); // remonte jusqu'au <li> le plus proche
+  if (!item) return;                   // clic hors d'un item : on ignore
+  console.log("livre choisi :", item.dataset.id);
+});
+```
+
+<Highlight couleur="ambre">L'avantage décisif : un seul écouteur suffit, et il fonctionne aussi pour les éléments **ajoutés plus tard**, sans avoir à les ré-abonner un par un.</Highlight>
+
+## 3. Les formulaires
+
+Un formulaire émet trois événements utiles : `submit` (à l'envoi), `input` (à chaque frappe) et `change` (quand la valeur est validée, souvent à la perte du focus). 
+Par défaut, lorsqu'un formulaire est soumis, le navigateur envoie les données selon les attributs du formulaire et recharge généralement la page. 
+Dans une application web interactive, on souhaite souvent empêcher ce comportement afin de valider les données, afficher des messages ou envoyer la requête soi-même avec JavaScript. 
+C'est pourquoi on intercepte l'événement `submit` et on appelle `preventDefault()`.
+
+```js
+const form = document.querySelector("#inscription");
+
+form.addEventListener("submit", (e) => {
+  e.preventDefault();              // empêche le rechargement
+  if (!form.checkValidity()) {
+    form.reportValidity();         // affiche les messages natifs
+    return;
+  }
+  const data = new FormData(form); // lit tous les champs nommés
+  const courriel = data.get("courriel");
+  // envoyer data vers le serveur...
+});
+```
+
+`FormData` lit d'un coup tous les champs portant un attribut `name`. La validation se fait d'abord par les contraintes HTML (`required`, `type="email"`, `pattern`, `min`), que l'on complète au besoin par des vérifications en JavaScript.
+
+<MarginNote type="astuce" titre="input ou change ?">
+`input` se déclenche à **chaque** modification (idéal pour un aperçu en direct ou un compteur de caractères). `change` ne se déclenche qu'une fois la saisie **arrêtée** (idéal pour valider ou déclencher une requête, sans le faire à chaque touche).
+</MarginNote>
+
+## 4. La liaison de données
+
+Dans une interface interactive, certaines informations existent en mémoire JavaScript : le nom saisi par l'utilisateur, la liste des livres, le nombre de clics, l'élément sélectionné, etc. 
+On appelle souvent ces informations l'**état** de l'interface.
+
+La **vue** correspond à ce qui est affiché dans le DOM. Le **rendu** est l'opération qui consiste à transformer l'état en éléments visibles dans la page.
+
+La liaison de données désigne les mécanismes qui gardent l'état et la vue cohérents.
+
+Lier les données, c'est garder cohérents l'**état** (les données en mémoire) et la **vue** (le DOM affiché). Deux régimes existent.
+
+- **Unidirectionnelle (one-way)** : l'état va vers la vue. On affiche l'état dans le DOM ; toute modification passe d'abord par l'état, puis par un nouveau rendu. L'état reste la source de vérité.
+- **Bidirectionnelle (two-way)** : l'état et la vue sont synchronisés. Un champ reflète l'état **et** le réécrit quand l'utilisateur tape.
+
+Basculez entre les deux modes : en two-way, taper dans la vue met tout à jour ; en one-way, la vue ne fait que refléter l'état.
+
+<TwoWayBinding client:visible />
+
+```js
+// la source de vérité
+let etat = { nom: "Lino" };
+
+// état -> vue : on rend l'état dans le DOM
+function rendre() {
+  document.querySelector("#apercu").textContent = `Bonjour, ${etat.nom} !`;
+}
+
+// toute modification passe par l'état, puis par un rendu (one-way)
+function setNom(v) {
+  etat.nom = v;
+  rendre();
+}
+
+// vue -> état : on ferme la boucle pour obtenir le two-way
+const champ = document.querySelector("#nom");
+champ.addEventListener("input", (e) => setNom(e.target.value));
+
+rendre();
+```
+
+<MarginNote type="lien" titre="Et les frameworks ?">
+React, Vue ou Svelte automatisent ce câblage : vous décrivez la vue en fonction de l'état, et le framework s'occupe de synchroniser le DOM. 
+Sans framework (appelé "vanilla"), le développeur doit écrire explicitement le code qui met à jour le DOM lorsque l'état change. 
+Cette approche demande plus de code, mais elle permet de comprendre les mécanismes que les frameworks automatisent.
+</MarginNote>
+
+<Checkpoint question="En liaison bidirectionnelle, pourquoi garder l'état comme source de vérité plutôt que de lire la valeur dans le DOM ?">
+Parce que l'état est unique et fiable, alors que la même donnée peut apparaître à plusieurs endroits du DOM. En centralisant la vérité dans l'état et en redessinant à partir de lui, toutes les vues restent cohérentes ; lire un peu partout dans le DOM mène vite à des incohérences.
+</Checkpoint>
+
+## 5. Les templates
+
+Lorsqu'une même structure HTML doit être répétée plusieurs fois, par exemple pour afficher une liste de cartes, il peut être tentant de construire une longue chaîne de caractères HTML. 
+Cette approche est fragile : une erreur de syntaxe est difficile à repérer, et l'insertion de contenu utilisateur avec `innerHTML` peut introduire des risques de sécurité.
+
+L'élément `<template>` permet de conserver la structure HTML dans le document, puis de la cloner en JavaScript lorsque nécessaire.
+Il est **analysé mais n'est pas rendu** : ses images et scripts ne se chargent pas, tant qu'on ne le clone pas. 
+C'est l'outil idéal pour répéter une structure.
+
+```html
+<template id="tpl-livre">
+  <li class="livre">
+    <span class="titre"></span>
+    <span class="auteur"></span>
+  </li>
+</template>
+```
+
+```js
+const tpl = document.querySelector("#tpl-livre");
+const liste = document.querySelector("#livres");
+
+for (const livre of livres) {
+  const noeud = tpl.content.cloneNode(true); // copie profonde du contenu
+  noeud.querySelector(".titre").textContent = livre.titre;
+  noeud.querySelector(".auteur").textContent = livre.auteur;
+  liste.append(noeud);
+}
+```
+
+<Highlight>On remplit le clone avec `textContent`, jamais en concaténant du HTML : le contenu reste du **texte**, ce qui évite l'injection. Comparé à `innerHTML`, le template garde la structure au même endroit et ne force pas le navigateur à ré-analyser une chaîne à chaque insertion.</Highlight>
+
+
+## 6. Pour aller plus loin : composants et encapsulation
+
+À mesure qu'une interface grandit, manipuler directement le DOM depuis un seul fichier JavaScript devient difficile à maintenir. On cherche alors à regrouper certaines parties de l'interface dans des unités autonomes : des composants.
+
+Un composant rassemble généralement trois éléments :
+
+- une structure HTML ;
+- un comportement JavaScript ;
+- parfois un style CSS propre.
+
+Les web components offrent une manière native de créer ce type d'unité dans le navigateur. Ils permettent de définir de nouvelles balises HTML personnalisées, comme `<menu-utilisateur>` ou `<carte-produit>`.
+
+Cette idée prolonge naturellement les notions vues dans cette page : les événements permettent au composant de réagir, les templates permettent de produire sa structure, et l'état permet de contrôler son affichage.
+
+<MarginNote type="plusloin" titre="Natif, puis outillé">
+Les web components sont une norme du navigateur, sans dépendance. Des bibliothèques comme Lit n'ajoutent qu'une fine couche au-dessus (rendu déclaratif, réactivité) tout en restant de vrais custom elements, donc interopérables avec n'importe quel cadre.
+</MarginNote>
+
+## 7. À retenir
+
+| Notion | Idée clé |
+|---|---|
+| Cycle d'un événement | Capture (descend), cible, bouillonnement (remonte) ; `target` contre `currentTarget` |
+| `stopPropagation` / `preventDefault` | Arrêter le voyage / annuler l'action par défaut : deux effets distincts |
+| Délégation | Un écouteur sur le parent, `event.target.closest()`, fonctionne pour les éléments futurs |
+| Formulaires | `preventDefault` sur `submit`, `FormData`, validation HTML puis JavaScript |
+| Liaison de données | One-way : état vers vue ; two-way : état et vue synchronisés ; l'état reste la source de vérité |
+| Templates | `<template>` inerte, `content.cloneNode(true)`, remplir par `textContent` |
+| Web components | `extends HTMLElement`, `customElements.define`, cycle de vie, shadow DOM, `<slot>` |

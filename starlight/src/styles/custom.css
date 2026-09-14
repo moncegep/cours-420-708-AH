@@ -1,0 +1,14 @@
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  margin: 2rem 0;
+}
+
+.markdown-wrapper p {
+    display: inline;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    margin: 0;
+}

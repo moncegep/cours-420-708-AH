@@ -1,0 +1,286 @@
+---
+interface Props {
+  pid?: string;
+  processName?: string;
+}
+
+const { pid = '1234', processName = 'node server.js' } = Astro.props;
+---
+
+<figure class="process-resources">
+  <svg viewBox="0 0 680 420" role="img" xmlns="http://www.w3.org/2000/svg">
+    <title>Les ressources matérielles utilisées par un processus</title>
+    <desc>
+      Diagramme montrant un processus au centre avec ses composants internes,
+      entouré des quatre ressources matérielles : CPU, RAM, disque et réseau.
+    </desc>
+
+    <!-- ===== Ressources matérielles (rangée du haut) ===== -->
+
+    <!-- CPU -->
+    <g class="res res--cpu">
+      <rect x="40" y="24" width="130" height="56" rx="8"/>
+      <text class="res__title" x="105" y="44" text-anchor="middle" dominant-baseline="central">CPU</text>
+      <text class="res__sub" x="105" y="62" text-anchor="middle" dominant-baseline="central">Exécute le code</text>
+    </g>
+
+    <!-- RAM -->
+    <g class="res res--ram">
+      <rect x="190" y="24" width="140" height="56" rx="8"/>
+      <text class="res__title" x="260" y="44" text-anchor="middle" dominant-baseline="central">RAM</text>
+      <text class="res__sub" x="260" y="62" text-anchor="middle" dominant-baseline="central">Stocke en mémoire</text>
+    </g>
+
+    <!-- Disque -->
+    <g class="res res--disk">
+      <rect x="350" y="24" width="140" height="56" rx="8"/>
+      <text class="res__title" x="420" y="44" text-anchor="middle" dominant-baseline="central">Disque</text>
+      <text class="res__sub" x="420" y="62" text-anchor="middle" dominant-baseline="central">Fichiers lus / écrits</text>
+    </g>
+
+    <!-- Réseau -->
+    <g class="res res--net">
+      <rect x="510" y="24" width="140" height="56" rx="8"/>
+      <text class="res__title" x="580" y="44" text-anchor="middle" dominant-baseline="central">Réseau</text>
+      <text class="res__sub" x="580" y="62" text-anchor="middle" dominant-baseline="central">Connexions TCP / HTTP</text>
+    </g>
+
+    <!-- ===== Flèches ressources → processus ===== -->
+    <line class="arrow arrow--cpu"  x1="105" y1="80" x2="105" y2="144"/>
+    <line class="arrow arrow--ram"  x1="260" y1="80" x2="260" y2="144"/>
+    <line class="arrow arrow--disk" x1="420" y1="80" x2="420" y2="144"/>
+    <line class="arrow arrow--net"  x1="580" y1="80" x2="580" y2="144"/>
+
+    <!-- Pointes de flèche -->
+    <polygon class="arrowhead arrowhead--cpu"  points="99,134 105,146 111,134"/>
+    <polygon class="arrowhead arrowhead--ram"  points="254,134 260,146 266,134"/>
+    <polygon class="arrowhead arrowhead--disk" points="414,134 420,146 426,134"/>
+    <polygon class="arrowhead arrowhead--net"  points="574,134 580,146 586,134"/>
+
+    <!-- ===== Conteneur du processus ===== -->
+    <g class="proc">
+      <rect class="proc__border" x="40" y="148" width="610" height="260" rx="14"/>
+      <text class="proc__title" x="345" y="174" text-anchor="middle" dominant-baseline="central">
+        {`Processus (PID ${pid} — ${processName})`}
+      </text>
+    </g>
+
+    <!-- ===== Composants internes — Rangée 1 ===== -->
+
+    <!-- Code du programme (lié au CPU) -->
+    <g class="comp comp--cpu">
+      <rect x="70" y="196" width="170" height="56" rx="8"/>
+      <text class="comp__title" x="155" y="216" text-anchor="middle" dominant-baseline="central">Code du programme</text>
+      <text class="comp__sub" x="155" y="234" text-anchor="middle" dominant-baseline="central">Instructions à exécuter</text>
+    </g>
+
+    <!-- Variables d'environnement (en RAM) -->
+    <g class="comp comp--ram">
+      <rect x="260" y="196" width="170" height="56" rx="8"/>
+      <text class="comp__title" x="345" y="216" text-anchor="middle" dominant-baseline="central">Variables d'env</text>
+      <text class="comp__sub" x="345" y="234" text-anchor="middle" dominant-baseline="central">PATH, PORT, NODE_ENV</text>
+    </g>
+
+    <!-- Pile d'appels (en RAM) -->
+    <g class="comp comp--ram">
+      <rect x="450" y="196" width="170" height="56" rx="8"/>
+      <text class="comp__title" x="535" y="216" text-anchor="middle" dominant-baseline="central">Pile d'appels</text>
+      <text class="comp__sub" x="535" y="234" text-anchor="middle" dominant-baseline="central">Appels de fonctions (stack)</text>
+    </g>
+
+    <!-- ===== Composants internes — Rangée 2 ===== -->
+
+    <!-- Mémoire dynamique (en RAM) -->
+    <g class="comp comp--ram">
+      <rect x="70" y="270" width="250" height="56" rx="8"/>
+      <text class="comp__title" x="195" y="290" text-anchor="middle" dominant-baseline="central">Mémoire dynamique (heap)</text>
+      <text class="comp__sub" x="195" y="308" text-anchor="middle" dominant-baseline="central">Objets, tableaux, données allouées</text>
+    </g>
+
+    <!-- Descripteurs de fichiers (disque + réseau) -->
+    <g class="comp comp--io">
+      <rect x="340" y="270" width="280" height="56" rx="8"/>
+      <text class="comp__title" x="480" y="290" text-anchor="middle" dominant-baseline="central">Descripteurs de fichiers</text>
+      <text class="comp__sub" x="480" y="308" text-anchor="middle" dominant-baseline="central">Fichiers ouverts, sockets, stdin/stdout</text>
+    </g>
+
+    <!-- ===== Légende ===== -->
+    <text class="legend__label" x="345" y="360" text-anchor="middle" dominant-baseline="central">
+      Couleur = ressource principale associée
+    </text>
+    <rect class="legend-swatch legend-swatch--cpu" x="138" y="378" width="14" height="14" rx="3"/>
+    <text class="legend__text" x="158" y="385" dominant-baseline="central">CPU</text>
+    <rect class="legend-swatch legend-swatch--ram" x="228" y="378" width="14" height="14" rx="3"/>
+    <text class="legend__text" x="248" y="385" dominant-baseline="central">RAM</text>
+    <rect class="legend-swatch legend-swatch--disk" x="318" y="378" width="14" height="14" rx="3"/>
+    <text class="legend__text" x="338" y="385" dominant-baseline="central">Disque</text>
+    <rect class="legend-swatch legend-swatch--io" x="418" y="378" width="14" height="14" rx="3"/>
+    <text class="legend__text" x="438" y="385" dominant-baseline="central">Réseau</text>
+  </svg>
+</figure>
+
+<style>
+  .process-resources {
+    margin: 1.5rem 0;
+    padding: 0;
+  }
+
+  .process-resources svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  /* ===== Palette : mode clair ===== */
+
+  /* CPU — amber */
+  .res--cpu rect    { fill: #FAEEDA; stroke: #854F0B; stroke-width: 0.5; }
+  .res--cpu .res__title { fill: #633806; font-size: 14px; font-weight: 500; }
+  .res--cpu .res__sub   { fill: #854F0B; font-size: 12px; }
+
+  .comp--cpu rect   { fill: #FAEEDA; stroke: #854F0B; stroke-width: 0.5; }
+  .comp--cpu .comp__title { fill: #633806; font-size: 14px; font-weight: 500; }
+  .comp--cpu .comp__sub   { fill: #854F0B; font-size: 12px; }
+
+  .arrow--cpu       { stroke: #BA7517; stroke-width: 1.5; }
+  .arrowhead--cpu   { fill: #BA7517; }
+  .legend-swatch--cpu { fill: #FAEEDA; stroke: #854F0B; stroke-width: 0.5; }
+
+  /* RAM — blue */
+  .res--ram rect    { fill: #E6F1FB; stroke: #185FA5; stroke-width: 0.5; }
+  .res--ram .res__title { fill: #0C447C; font-size: 14px; font-weight: 500; }
+  .res--ram .res__sub   { fill: #185FA5; font-size: 12px; }
+
+  .comp--ram rect   { fill: #E6F1FB; stroke: #185FA5; stroke-width: 0.5; }
+  .comp--ram .comp__title { fill: #0C447C; font-size: 14px; font-weight: 500; }
+  .comp--ram .comp__sub   { fill: #185FA5; font-size: 12px; }
+
+  .arrow--ram       { stroke: #378ADD; stroke-width: 1.5; }
+  .arrowhead--ram   { fill: #378ADD; }
+  .legend-swatch--ram { fill: #E6F1FB; stroke: #185FA5; stroke-width: 0.5; }
+
+  /* Disque — purple */
+  .res--disk rect   { fill: #EEEDFE; stroke: #534AB7; stroke-width: 0.5; }
+  .res--disk .res__title { fill: #3C3489; font-size: 14px; font-weight: 500; }
+  .res--disk .res__sub   { fill: #534AB7; font-size: 12px; }
+
+  .arrow--disk      { stroke: #7F77DD; stroke-width: 1.5; }
+  .arrowhead--disk  { fill: #7F77DD; }
+  .legend-swatch--disk { fill: #EEEDFE; stroke: #534AB7; stroke-width: 0.5; }
+
+  /* Réseau / I/O — teal */
+  .res--net rect    { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 0.5; }
+  .res--net .res__title { fill: #085041; font-size: 14px; font-weight: 500; }
+  .res--net .res__sub   { fill: #0F6E56; font-size: 12px; }
+
+  .comp--io rect    { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 0.5; }
+  .comp--io .comp__title { fill: #085041; font-size: 14px; font-weight: 500; }
+  .comp--io .comp__sub   { fill: #0F6E56; font-size: 12px; }
+
+  .arrow--net       { stroke: #1D9E75; stroke-width: 1.5; }
+  .arrowhead--net   { fill: #1D9E75; }
+  .legend-swatch--io { fill: #E1F5EE; stroke: #0F6E56; stroke-width: 0.5; }
+
+  /* Conteneur processus — gray */
+  .proc__border     { fill: #F1EFE8; stroke: #5F5E5A; stroke-width: 0.5; }
+  .proc__title      { fill: #2C2C2A; font-size: 14px; font-weight: 500; }
+
+  /* Légende */
+  .legend__label    { fill: #5F5E5A; font-size: 12px; }
+  .legend__text     { fill: #2C2C2A; font-size: 12px; }
+
+  /* Fonte commune */
+  text {
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+
+  /* ===== Palette : mode sombre ===== */
+  :root[data-theme='dark'] .res--cpu rect,
+  :root[data-theme='dark'] .comp--cpu rect    { fill: #412402; stroke: #EF9F27; }
+  :root[data-theme='dark'] .res--cpu .res__title,
+  :root[data-theme='dark'] .comp--cpu .comp__title { fill: #FAEEDA; }
+  :root[data-theme='dark'] .res--cpu .res__sub,
+  :root[data-theme='dark'] .comp--cpu .comp__sub   { fill: #FAC775; }
+  :root[data-theme='dark'] .legend-swatch--cpu { fill: #412402; stroke: #EF9F27; }
+
+  :root[data-theme='dark'] .res--ram rect,
+  :root[data-theme='dark'] .comp--ram rect    { fill: #042C53; stroke: #85B7EB; }
+  :root[data-theme='dark'] .res--ram .res__title,
+  :root[data-theme='dark'] .comp--ram .comp__title { fill: #E6F1FB; }
+  :root[data-theme='dark'] .res--ram .res__sub,
+  :root[data-theme='dark'] .comp--ram .comp__sub   { fill: #B5D4F4; }
+  :root[data-theme='dark'] .legend-swatch--ram { fill: #042C53; stroke: #85B7EB; }
+
+  :root[data-theme='dark'] .res--disk rect    { fill: #26215C; stroke: #AFA9EC; }
+  :root[data-theme='dark'] .res--disk .res__title { fill: #EEEDFE; }
+  :root[data-theme='dark'] .res--disk .res__sub   { fill: #CECBF6; }
+  :root[data-theme='dark'] .legend-swatch--disk { fill: #26215C; stroke: #AFA9EC; }
+
+  :root[data-theme='dark'] .res--net rect,
+  :root[data-theme='dark'] .comp--io rect     { fill: #04342C; stroke: #5DCAA5; }
+  :root[data-theme='dark'] .res--net .res__title,
+  :root[data-theme='dark'] .comp--io .comp__title { fill: #E1F5EE; }
+  :root[data-theme='dark'] .res--net .res__sub,
+  :root[data-theme='dark'] .comp--io .comp__sub   { fill: #9FE1CB; }
+  :root[data-theme='dark'] .legend-swatch--io { fill: #04342C; stroke: #5DCAA5; }
+
+  :root[data-theme='dark'] .arrow--cpu   { stroke: #EF9F27; }
+  :root[data-theme='dark'] .arrowhead--cpu { fill: #EF9F27; }
+  :root[data-theme='dark'] .arrow--ram   { stroke: #85B7EB; }
+  :root[data-theme='dark'] .arrowhead--ram { fill: #85B7EB; }
+  :root[data-theme='dark'] .arrow--disk  { stroke: #AFA9EC; }
+  :root[data-theme='dark'] .arrowhead--disk { fill: #AFA9EC; }
+  :root[data-theme='dark'] .arrow--net   { stroke: #5DCAA5; }
+  :root[data-theme='dark'] .arrowhead--net { fill: #5DCAA5; }
+
+  :root[data-theme='dark'] .proc__border { fill: #2C2C2A; stroke: #888780; }
+  :root[data-theme='dark'] .proc__title  { fill: #D3D1C7; }
+  :root[data-theme='dark'] .legend__label { fill: #B4B2A9; }
+  :root[data-theme='dark'] .legend__text  { fill: #D3D1C7; }
+
+  /* Fallback pour prefers-color-scheme si data-theme absent */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) .res--cpu rect,
+    :root:not([data-theme='light']) .comp--cpu rect    { fill: #412402; stroke: #EF9F27; }
+    :root:not([data-theme='light']) .res--cpu .res__title,
+    :root:not([data-theme='light']) .comp--cpu .comp__title { fill: #FAEEDA; }
+    :root:not([data-theme='light']) .res--cpu .res__sub,
+    :root:not([data-theme='light']) .comp--cpu .comp__sub   { fill: #FAC775; }
+    :root:not([data-theme='light']) .legend-swatch--cpu { fill: #412402; stroke: #EF9F27; }
+
+    :root:not([data-theme='light']) .res--ram rect,
+    :root:not([data-theme='light']) .comp--ram rect    { fill: #042C53; stroke: #85B7EB; }
+    :root:not([data-theme='light']) .res--ram .res__title,
+    :root:not([data-theme='light']) .comp--ram .comp__title { fill: #E6F1FB; }
+    :root:not([data-theme='light']) .res--ram .res__sub,
+    :root:not([data-theme='light']) .comp--ram .comp__sub   { fill: #B5D4F4; }
+    :root:not([data-theme='light']) .legend-swatch--ram { fill: #042C53; stroke: #85B7EB; }
+
+    :root:not([data-theme='light']) .res--disk rect    { fill: #26215C; stroke: #AFA9EC; }
+    :root:not([data-theme='light']) .res--disk .res__title { fill: #EEEDFE; }
+    :root:not([data-theme='light']) .res--disk .res__sub   { fill: #CECBF6; }
+    :root:not([data-theme='light']) .legend-swatch--disk { fill: #26215C; stroke: #AFA9EC; }
+
+    :root:not([data-theme='light']) .res--net rect,
+    :root:not([data-theme='light']) .comp--io rect     { fill: #04342C; stroke: #5DCAA5; }
+    :root:not([data-theme='light']) .res--net .res__title,
+    :root:not([data-theme='light']) .comp--io .comp__title { fill: #E1F5EE; }
+    :root:not([data-theme='light']) .res--net .res__sub,
+    :root:not([data-theme='light']) .comp--io .comp__sub   { fill: #9FE1CB; }
+    :root:not([data-theme='light']) .legend-swatch--io { fill: #04342C; stroke: #5DCAA5; }
+
+    :root:not([data-theme='light']) .arrow--cpu   { stroke: #EF9F27; }
+    :root:not([data-theme='light']) .arrowhead--cpu { fill: #EF9F27; }
+    :root:not([data-theme='light']) .arrow--ram   { stroke: #85B7EB; }
+    :root:not([data-theme='light']) .arrowhead--ram { fill: #85B7EB; }
+    :root:not([data-theme='light']) .arrow--disk  { stroke: #AFA9EC; }
+    :root:not([data-theme='light']) .arrowhead--disk { fill: #AFA9EC; }
+    :root:not([data-theme='light']) .arrow--net   { stroke: #5DCAA5; }
+    :root:not([data-theme='light']) .arrowhead--net { fill: #5DCAA5; }
+
+    :root:not([data-theme='light']) .proc__border { fill: #2C2C2A; stroke: #888780; }
+    :root:not([data-theme='light']) .proc__title  { fill: #D3D1C7; }
+    :root:not([data-theme='light']) .legend__label { fill: #B4B2A9; }
+    :root:not([data-theme='light']) .legend__text  { fill: #D3D1C7; }
+  }
+</style>

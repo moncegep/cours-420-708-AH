@@ -1,0 +1,100 @@
+---
+/**
+ * Highlight.astro
+ *
+ * Surligne une portion de texte inline. Le surlignage se "dessine"
+ * de gauche à droite quand le passage entre dans le champ de vision,
+ * attirant l'œil sur les phrases clés sans casser la lecture.
+ *
+ * Props :
+ *   - couleur : "menthe" | "ambre" | "violet" | "bleu"  (défaut menthe)
+ *
+ * Usage (dans MDX, inline) :
+ *   une bonne API <Highlight>répond à des questions</Highlight>, pas à des tables.
+ *   fonctionne aussi autour de code : <Highlight>`app.get()`</Highlight>
+ */
+
+interface Props {
+  couleur?: "menthe" | "ambre" | "violet" | "bleu";
+}
+
+const { couleur = "menthe" } = Astro.props;
+---
+
+<mark class={`hl hl--${couleur}`} data-highlight><slot /></mark>
+
+<script>
+  function initHighlights() {
+    const marks = document.querySelectorAll("[data-highlight]");
+    if (marks.length === 0) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("hl--on");
+            io.unobserve(entry.target);
+          }
+        });
+      },
+      { rootMargin: "0px 0px -20% 0px", threshold: 0.6 }
+    );
+
+    marks.forEach((m) => io.observe(m));
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initHighlights);
+  } else {
+    initHighlights();
+  }
+  document.addEventListener("astro:page-load", initHighlights);
+</script>
+
+<style>
+  .hl {
+    --hl-color: #5eead4;
+    background-color: transparent;
+    background-image: linear-gradient(var(--hl-color), var(--hl-color));
+    background-repeat: no-repeat;
+    /* hauteur ~70% centree verticalement : couvre le corps des lettres
+       sans deborder sur les lignes voisines */
+    background-size: 0% 65%;
+    background-position: 0 center;
+    color: inherit;
+    padding: 0.1em 0.15em;
+    margin: 0 -0.05em;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    transition: background-size 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+    border-radius: 2px;
+  }
+  .hl--on {
+    background-size: 100% 65%;
+  }
+
+  .hl--menthe { --hl-color: #5eead4; }
+  .hl--ambre { --hl-color: #fcd34d; }
+  .hl--violet { --hl-color: #d8b4fe; }
+  .hl--bleu { --hl-color: #93c5fd; }
+
+  /* En thème sombre, le texte hérité est clair : un pastel opaque le rendrait
+     illisible. On passe à des bandes translucides, sous lesquelles le texte
+     clair reste lisible, et l'état avant animation (sans surlignage) l'est aussi. */
+  :global([data-theme='dark']) .hl--menthe { --hl-color: rgba(45, 212, 191, 0.32); }
+  :global([data-theme='dark']) .hl--ambre { --hl-color: rgba(251, 191, 36, 0.30); }
+  :global([data-theme='dark']) .hl--violet { --hl-color: rgba(192, 132, 252, 0.34); }
+  :global([data-theme='dark']) .hl--bleu { --hl-color: rgba(96, 165, 250, 0.34); }
+
+  /* Code inline a l'interieur d'un Highlight : neutraliser son fond
+     opaque (defini globalement sur .prose code) pour que le surlignage
+     du parent reste visible. On garde la police mono et la couleur. */
+  .hl :global(code) {
+    background: transparent !important;
+    padding: 0 1px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hl { background-size: 100% 65%; transition: none; }
+  }
+</style>

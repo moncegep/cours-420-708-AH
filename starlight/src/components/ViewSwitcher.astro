@@ -1,0 +1,184 @@
+---
+import Icon from "./Icon.astro";
+
+/**
+ * ViewSwitcher.astro
+ * 
+ * Toggle entre la vue lecture (contenu MDX statique) et la vue
+ * présentation (composant React hydraté). Le contenu MDX n'est
+ * jamais hydraté par React — il reste du HTML statique géré par Astro.
+ * 
+ * Usage :
+ *   <ViewSwitcher>
+ *     <SlidePresentation slot="slides" data={slideData} client:load />
+ *     
+ *     ... contenu MDX linéaire (slot par défaut) ...
+ *   </ViewSwitcher>
+ */
+---
+
+<div class="view-switcher">
+  {/* Toggle pill */}
+  <div class="vs-toggle-bar">
+    <div class="vs-toggle-pill">
+      <button class="vs-btn active" data-view="linear">
+        <Icon name="book-open" />
+        Lecture
+      </button>
+      <button class="vs-btn" data-view="slides">
+        <Icon name="presentation" />
+        Présentation
+      </button>
+    </div>
+  </div>
+
+  {/* Vue linéaire — contenu MDX statique */}
+  <div class="vs-linear" data-active="true">
+    <slot />
+  </div>
+
+  {/* Vue slides — îlot React hydraté indépendamment */}
+  <div class="vs-slides" data-active="false">
+    <slot name="slides" />
+  </div>
+</div>
+
+<style>
+  .view-switcher {
+    position: relative;
+  }
+
+  .vs-toggle-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 1.5rem;
+    position: relative;
+    z-index: 10;
+  }
+
+  .vs-toggle-pill {
+    display: inline-flex;
+    background: var(--sl-color-gray-6, #f0eeeb);
+    border-radius: 9px;
+    padding: 3px;
+    gap: 2px;
+  }
+
+  .vs-btn {
+    display: flex;
+    align-items: center;
+    margin-top: 0;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 7px;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 400;
+    font-family: inherit;
+    transition: all 0.2s ease;
+    background: transparent;
+    color: var(--sl-color-gray-3, #6b6b80);
+    box-shadow: none;
+  }
+
+  .vs-btn.active {
+    font-weight: 600;
+    background: var(--sl-color-white, white);
+    color: var(--sl-color-black, #1a1a2e);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  }
+
+  .vs-linear[data-active="false"] {
+    display: none;
+  }
+
+  .vs-slides[data-active="false"] {
+    display: none;
+  }
+
+  /* In slide mode, remove bottom margin and make toggle sticky */
+  .view-switcher:has(.vs-slides[data-active="true"]) .vs-toggle-bar {
+    position: sticky;
+    top: 0;
+    margin-bottom: 0;
+    padding: 8px 0;
+    background: var(--sl-color-bg, white);
+    border-bottom: 1px solid var(--sl-color-gray-6, #e0ded8);
+  }
+
+  /* Break out of Starlight content padding in slide mode */
+  .vs-slides[data-active="true"] {
+    margin: 0 -1.5rem;
+  }
+</style>
+
+<style is:global>
+  html[data-view="slides"] .right-sidebar {
+    display: none;
+  }
+ 
+  /* Reclaim the width for the main content */
+  html[data-view="slides"] .main-pane {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /* Remove Starlight's content width constraints */
+  html[data-view="slides"] .content-panel {
+    max-width: 100%;
+  }
+ 
+  html[data-view="slides"] .content-panel > :is(main, .sl-container) {
+    max-width: 100%;
+    padding-left: 10%;
+  }
+ 
+  html[data-view="slides"] .sl-markdown-content {
+    max-width: 100%;
+  }
+ 
+  /* Remove side padding on the content area */
+  html[data-view="slides"] .main-pane > * {
+    padding-inline: 0;
+  }
+</style>
+
+<script>
+  function initViewSwitcher() {
+    document.querySelectorAll('.view-switcher').forEach((switcher) => {
+      const buttons = switcher.querySelectorAll('.vs-btn');
+      const linear = switcher.querySelector('.vs-linear');
+      const slides = switcher.querySelector('.vs-slides');
+
+      if (!linear || !slides) return;
+
+      buttons.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const view = btn.getAttribute('data-view');
+
+          // Update buttons
+          buttons.forEach((btn) => btn.classList.remove('active'));
+          btn.classList.add('active');
+
+          // Toggle views
+          if (view === 'slides') {
+            linear.setAttribute('data-active', 'false');
+            slides.setAttribute('data-active', 'true');
+            document.documentElement.setAttribute('data-view', 'slides');
+          } else {
+            linear.setAttribute('data-active', 'true');
+            slides.setAttribute('data-active', 'false');
+            document.documentElement.removeAttribute('data-view');
+          }
+        });
+      });
+    });
+  }
+
+  // Run on initial load
+  initViewSwitcher();
+
+  // Re-run on Astro view transitions (if enabled)
+  document.addEventListener('astro:after-swap', initViewSwitcher);
+</script>

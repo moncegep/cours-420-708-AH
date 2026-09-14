@@ -1,0 +1,28 @@
+---
+title: Initiation au développement de microservices web
+description: Site présentant le matériel de support du cours 420-708-AH (Initiation au développement de microservices web).
+template: splash # Remove or comment out this line to display the site sidebar on this page.
+hero:
+  title: <b style='color:rgb(218,30,16)'>420-708-AH</b> <br> Initiation au développement de microservices web
+  tagline: "API REST avec Node.js"
+  image:
+    file: ../../assets/houston.webp
+  actions:
+    - text: Notes de cours
+      link: /guides/guide-nodejs/
+      icon: right-arrow
+---
+
+{/* import calendrier from '../../data/course-plan.json'; */}
+
+import CourseCalendar from '../../components/CourseCalendar.astro';
+import CourseFooter from './../../components/Footer.astro';
+// import LessonVideo from './../../components/LessonVideo.astro';
+// import LessonCard from './../../components/LessonCard.astro';
+
+
+{/* ## Calendrier de la session
+
+<CourseCalendar  weeks={calendrier.weeks} phases={calendrier.phases} /> */}
+
+<CourseFooter author={'L-E Lafontant'} />

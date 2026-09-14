@@ -1,0 +1,17 @@
+{
+  "name": "demo-node",
+  "version": "1.0.0",
+  "description": "Prise en main de Node.js",
+  "license": "ISC",
+  "author": "L-E",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "vite",
+    "test": "echo \"Ouups pas de tests definis\" && exit 1"
+  },
+  "dependencies": {
+    "lodash": "^4.18.1",
+    "vite": "^8.3.0"
+  }
+}

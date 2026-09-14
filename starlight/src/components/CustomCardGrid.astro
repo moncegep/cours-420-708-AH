@@ -1,0 +1,114 @@
+---
+/**
+ * CardGrid.astro — Grille de cartes personnalisable pour Astro Starlight
+ *
+ * PROPS — COLONNES
+ *   cols          Nombre fixe de colonnes (ex: 3)
+ *   minColWidth   Largeur min pour auto-fill        (défaut : "220px")
+ *   maxColWidth   Largeur max par colonne           (défaut : "1fr")
+ *
+ * PROPS — ESPACEMENT
+ *   gap           Écart entre les cartes            (défaut : "1rem")
+ *   padding       Padding autour de la grille       (défaut : "0")
+ *
+ * PROPS — ALIGNEMENT
+ *   align         align-items CSS                   (défaut : "stretch")
+ *   justify       justify-items CSS                 (défaut : "stretch")
+ *
+ * PROPS — APPARENCE
+ *   bg            Fond de la grille                 (défaut : "transparent")
+ *   borderRadius  Rayon de la grille                (défaut : "0")
+ *
+ * PROPS — RESPONSIVE
+ *   stacked       1 colonne sous `breakpoint`       (défaut : false)
+ *   breakpoint    Seuil de déclenchement            (défaut : "600px")
+ *
+ * SLOT (default)  Insérer les <Card /> ici
+ */
+
+interface Props {
+  cols?: number;
+  minColWidth?: string;
+  maxColWidth?: string;
+  gap?: string;
+  padding?: string;
+  align?: string;
+  justify?: string;
+  bg?: string;
+  borderRadius?: string;
+  stacked?: boolean;
+  breakpoint?: string;
+  class?: string;
+}
+
+const {
+  cols,
+  minColWidth  = "220px",
+  maxColWidth  = "1fr",
+  gap          = "0.8rem",
+  padding      = "0",
+  align        = "stretch",
+  justify      = "stretch",
+  bg           = "transparent",
+  borderRadius = "0",
+  stacked      = false,
+  breakpoint   = "600px",
+  class: className = "",
+} = Astro.props;
+
+// Calcul du grid-template-columns
+const templateCols = cols
+  ? `repeat(${cols}, minmax(0, 1fr))`
+  : `repeat(auto-fill, minmax(${minColWidth}, ${maxColWidth}))`;
+
+const vars = [
+  `--cg-cols:${templateCols}`,
+  `--cg-gap:${gap}`,
+  `--cg-padding:${padding}`,
+  `--cg-align:${align}`,
+  `--cg-justify:${justify}`,
+  `--cg-bg:${bg}`,
+  `--cg-radius:${borderRadius}`,
+].join(";");
+---
+
+<div
+  class:list={["sl-card-grid", { "sl-card-grid--stacked": stacked }, className]}
+  style={vars}
+>
+  <slot />
+</div>
+
+<!--
+  Breakpoint dynamique injecté en inline uniquement si stacked=true.
+  Les media queries ne peuvent pas lire les CSS custom properties,
+  d'où cette approche avec set:html.
+-->
+{stacked && (
+  <style set:html={`
+    @media (min-width: ${breakpoint}) {
+      .sl-card-grid--stacked {
+        grid-template-columns: ${templateCols};
+      }
+    }
+  `} />
+)}
+
+<style>
+  .sl-card-grid {
+    display: grid;
+    grid-template-columns: var(--cg-cols);
+    gap: var(--cg-gap);
+    padding: var(--cg-padding);
+    align-items: var(--cg-align);
+    justify-items: var(--cg-justify);
+    background: var(--cg-bg);
+    border-radius: var(--cg-radius);
+    width: 100%;
+  }
+
+  /* Mobile-first : 1 colonne si stacked=true (avant le breakpoint) */
+  .sl-card-grid--stacked {
+    grid-template-columns: 1fr;
+  }
+</style>

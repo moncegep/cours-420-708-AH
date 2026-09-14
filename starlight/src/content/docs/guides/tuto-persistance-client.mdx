@@ -1,0 +1,100 @@
+---
+layout: ../../layouts/DocLayout.astro
+title: "Stockage côté client"
+draft: true
+description: "La famille des mécanismes qui vivent sur le client : cookies, Web Storage (localStorage / sessionStorage), et leurs équivalents mobile (jeton sécurisé, SQLite) et objet connecté (identifiant d'appareil, tampon)."
+---
+
+import MarginNote from "../../components/MarginNote.astro";
+import Highlight from "../../components/Highlight.astro";
+import Checkpoint from "../../components/Checkpoint.astro";
+import Consideration from "../../components/Consideration.astro";
+
+<MarginNote type="prerequis">
+Cette fiche approfondit une famille vue dans [Choisir une stratégie de persistance](/notes/persistance). Elle suppose que « HTTP est sans état » vous parle déjà.
+</MarginNote>
+
+Le **client** peut mémoriser de l'information et la renvoyer aux requêtes suivantes. C'est l'endroit idéal pour ce qui **identifie** la session, **personnalise** l'expérience, ou permet de fonctionner **hors-ligne**. Le revers : le client n'est pas digne de confiance et l'utilisateur peut tout effacer — on n'y met donc <Highlight>jamais de secret ni de donnée critique en clair</Highlight>.
+
+## Cookies
+
+Un cookie est une petite donnée stockée par le navigateur et **renvoyée automatiquement** au serveur à chaque requête vers le domaine concerné. C'est le mécanisme historique pour maintenir un état dans HTTP.
+
+<Consideration tech="cookie" />
+
+### À quoi ça sert
+
+Identifier une session, conserver une préférence simple (langue, thème), mémoriser un état temporaire de navigation, ou suivre des comportements (selon les règles de consentement).
+
+```http
+Set-Cookie: sessionId=abc123; HttpOnly; Secure; SameSite=Lax
+Set-Cookie: theme=dark; Max-Age=2592000; Path=/
+```
+
+<MarginNote type="attention" titre="Suivi et consentement">
+Les cookies de **suivi inter-sites** sont encadrés par des règles de consentement (au Québec, la Loi 25). Un cookie strictement nécessaire (un identifiant de session) n'a pas le même statut qu'un cookie de pistage.
+</MarginNote>
+
+### De quoi ai-je besoin
+
+Côté serveur, on pose `Set-Cookie` dans la réponse ; avec Express, on ne l'écrit pas à la main :
+
+```js
+res.cookie("sessionId", "abc123", { httpOnly: true, secure: true, sameSite: "lax" });
+const sid = req.cookies.sessionId;   // lecture (middleware cookie-parser)
+```
+
+Le navigateur **renvoie ensuite le cookie automatiquement**. Côté client, JavaScript peut en créer certains (`document.cookie`), mais un cookie `HttpOnly` lui est inaccessible — exactement ce qu'on veut pour un identifiant de session, qu'on protège ainsi du vol par XSS.
+
+### Comment le contrôler
+
+Tout se joue dans les **attributs** :
+
+- **Durée** — `Max-Age` (secondes) ou `Expires` (date) ; sans l'un ni l'autre, c'est un cookie de session, effacé à la fermeture du navigateur.
+- **Sécurité** — `HttpOnly` (inaccessible au JS), `Secure` (HTTPS seul).
+- **Portée** — `Path` (chemins), `Domain` (domaines/sous-domaines).
+- **Intersites** — `SameSite=Strict` / `Lax` (compromis courant) / `None` (qui exige `Secure`).
+
+### Ce qu'on évite et quand l'utiliser
+
+Un cookie ne porte qu'une petite paire `nom=valeur`. On évite les données volumineuses, les objets complexes, les secrets en clair, les mots de passe. <Highlight couleur="ambre">Bon usage : un identifiant de session, une préférence simple utile au serveur.</Highlight> Mauvais usage : un gros objet JSON, un cache d'application, des données personnelles détaillées.
+
+## Web Storage — localStorage et sessionStorage
+
+Quand la donnée n'a **pas besoin** de partir au serveur à chaque requête, le **Web Storage** est plus adapté : il est lu et écrit par votre code, et reste sur le client.
+
+<Consideration tech="localStorage" />
+
+```js
+localStorage.setItem("brouillon", JSON.stringify(donnees));
+const donnees = JSON.parse(localStorage.getItem("brouillon") ?? "null");
+localStorage.removeItem("brouillon");
+```
+
+Plus de place qu'un cookie (~5 à 10 Mo), mais l'API est **synchrone** et le contenu est **accessible au JavaScript** — donc vulnérable au XSS : <Highlight>jamais de secret ici non plus</Highlight>. Deux variantes : `localStorage` **persiste** jusqu'à effacement ; `sessionStorage` se vide à la **fermeture de l'onglet**. Idéal pour un brouillon, des préférences locales, ou un cache d'application que le serveur n'a pas à connaître.
+
+## Sur mobile
+
+Une application mobile remplace le cookie par un **jeton de session** rangé dans un **stockage sécurisé** (Keychain sur iOS, Keystore sur Android), chiffré par l'OS, et joint manuellement à chaque requête dans un en-tête.
+
+<Consideration tech="token" />
+
+Pour tenir un véritable état **hors-ligne**, l'app embarque souvent une **base locale** (SQLite, Room, Core Data) : on lit et écrit localement, puis on **synchronise** avec le serveur au retour du réseau — au prix d'une gestion des conflits.
+
+<Consideration tech="sqlite" />
+
+## Sur un objet connecté
+
+Un capteur a peu de ressources. Il s'identifie par un **identifiant d'appareil** envoyé dans un en-tête à chaque relevé, et **tamponne** ses mesures quand le réseau manque, pour les renvoyer par lots ensuite.
+
+<Consideration tech="deviceid" />
+
+<Consideration tech="buffer" />
+
+<Checkpoint question="Pour un brouillon de formulaire qu'on veut retrouver si l'utilisateur recharge la page — mais que le serveur n'a aucune raison de connaître — cookie ou Web Storage ?">
+**Web Storage** (`localStorage`). Le serveur n'a pas besoin du brouillon : l'envoyer dans un cookie à *chaque* requête serait du trafic gaspillé, et la capacité d'un cookie est trop faible. `localStorage` garde la donnée côté client, lue par le code seulement quand c'est utile. Réservez le cookie à ce que le **serveur** doit recevoir automatiquement (l'identifiant de session).
+</Checkpoint>
+
+<MarginNote type="lien" titre="Revenir au panorama">
+Pour comparer cette famille aux autres, retournez à [Choisir une stratégie de persistance](/notes/persistance).
+</MarginNote>

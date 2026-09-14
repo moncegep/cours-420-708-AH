@@ -1,0 +1,157 @@
+---
+/**
+ * Card.astro — Composant carte personnalisable pour Astro Starlight
+ *
+ * SLOTS
+ *   icon        SVG inline (prioritaire sur la prop `icon`)
+ *   (default)   Contenu libre sous la description
+ */
+
+interface Props {
+  title: string;
+  description?: string;
+  href?: string;
+
+  // Icône
+  icon?: string;         // URL / chemin vers un SVG externe
+  iconAlt?: string;
+  iconSize?: number;     // px, défaut 48
+  iconBg?: string;       // fond du conteneur
+  iconPadding?: string;  // défaut "0.5rem"
+  iconRadius?: string;   // défaut "0.5rem"
+
+  // Apparence
+  bg?: string;
+  color?: string;
+  accentColor?: string;
+  border?: string;
+  borderRadius?: string;
+  shadow?: string;
+
+  // Espacement & taille
+  padding?: string;
+  gap?: string;
+  minWidth?: string;
+  maxWidth?: string;
+
+  // Layout
+  horizontal?: boolean;
+  class?: string;
+}
+
+const {
+  title, description, href,
+
+  icon, iconAlt = "", iconSize = 48,
+  iconBg = "transparent", iconPadding = "0.5rem", iconRadius = "0.5rem",
+
+  bg           = "var(--sl-color-bg-sidebar, #f8fafc)",
+  color        = "var(--sl-color-text, #1e293b)",
+  accentColor  = "var(--sl-color-text-accent, #6366f1)",
+  border       = "1px solid var(--sl-color-hairline, #e2e8f0)",
+  borderRadius = "0.75rem",
+  shadow       = "0 2px 8px rgba(0,0,0,.07)",
+
+  padding = "1.5rem", gap = "1rem",
+  minWidth = "200px", maxWidth = "100%",
+
+  horizontal = false,
+  class: className = "",
+} = Astro.props;
+
+const hasIconSlot    = Astro.slots.has("icon");
+const hasDefaultSlot = Astro.slots.has("default");
+const hasFooterSlot = Astro.slots.has("footer");
+const Tag = href ? "a" : "div";
+
+const vars = [
+  `--c-bg:${bg}`,
+  `--c-color:${color}`,
+  `--c-accent:${accentColor}`,
+  `--c-border:${border}`,
+  `--c-radius:${borderRadius}`,
+  `--c-shadow:${shadow}`,
+  `--c-padding:${padding}`,
+  `--c-gap:${gap}`,
+  `--c-min:${minWidth}`,
+  `--c-max:${maxWidth}`,
+  `--c-icon-bg:${iconBg}`,
+  `--c-icon-pad:${iconPadding}`,
+  `--c-icon-r:${iconRadius}`,
+  `--c-icon-sz:${iconSize}px`,
+].join(";");
+---
+
+<Tag
+  class:list={["sl-card", { "sl-card--h": horizontal, "sl-card--link": !!href }, className]}
+  style={vars}
+  href={href}
+>
+  <div class="sl-card__header">
+    {(icon || hasIconSlot) && (
+      <div class="sl-card__icon">
+        {hasIconSlot
+          ? <slot name="icon" />
+          : <img src={icon} alt={iconAlt} width={iconSize} height={iconSize} loading="lazy" decoding="async" />
+        }
+      </div>
+    )}
+    <p class="sl-card__title">{title}</p>
+  </div>
+
+  <div class="sl-card__body">
+    {description && <p class="sl-card__desc">{description}</p>}
+    {hasDefaultSlot && <div class="sl-card__content"><slot /></div>}
+  </div>
+  <footer>
+    {hasFooterSlot && <div class="sl-card__content"><slot name="footer" /></div>}
+  </footer>
+</Tag>
+
+<style>
+  .sl-card {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    gap: var(--c-gap);
+    min-width: var(--c-min);
+    max-width: var(--c-max);
+    padding: var(--c-padding);
+    background: var(--c-bg);
+    color: var(--c-color);
+    border: var(--c-border);
+    border-radius: var(--c-radius);
+    box-shadow: var(--c-shadow);
+    text-decoration: none;
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+  .sl-card--h { flex-direction: row; align-items: flex-start; }
+
+  .sl-card--link:hover { box-shadow: 0 8px 24px rgba(0,0,0,.13); transform: translateY(-2px); }
+  .sl-card--link:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 3px; }
+
+  .sl-card__icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--c-icon-bg);
+    padding: var(--c-icon-pad);
+    border-radius: var(--c-icon-r);
+    width: fit-content;
+    height: fit-content;
+  }
+  .sl-card__icon img,
+  .sl-card__icon :global(svg) {
+    width: var(--c-icon-sz);
+    height: var(--c-icon-sz);
+    object-fit: contain;
+    display: block;
+  }
+
+  .sl-card__header { display: flex; align-items: center; }
+  .sl-card__body { flex-grow: 1; display: flex; flex-direction: column; margin: 0;  gap: 0.35rem; min-width: 0; }
+  .sl-card__title { margin: 0; font-size: 1.2rem; font-weight: 600; color: var(--c-accent); line-height: 1.3; }
+  .sl-card__desc  { margin: 0; font-size: 0.875rem; line-height: 1.55; opacity: 0.82; }
+  .sl-card__content { margin-top: 0.3rem; font-size: 0.875rem; line-height: 1.55; }
+</style>

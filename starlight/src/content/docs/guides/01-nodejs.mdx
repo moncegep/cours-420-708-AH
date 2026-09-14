@@ -1,0 +1,340 @@
+---
+title: "Node.js et npm"
+description: "Introduction à Node.js, npm, et la gestion de projet — avec comparaisons Python et Java"
+---
+
+import MarginNote from "../../../components/MarginNote.astro";
+import Highlight from "../../../components/Highlight.astro";
+import Checkpoint from "../../../components/Checkpoint.astro";
+
+
+## Introduction à Node.js
+
+<MarginNote type="definition" titre="Node.js">
+Un environnement d'exécution qui permet d'utiliser JavaScript en dehors du navigateur. 
+Construit sur **V8**, le moteur JavaScript de Google Chrome — le même moteur qui exécute le JS dans votre navigateur, mais libéré du contexte d'une page web.
+</MarginNote>
+
+Avec Node.js, on peut écrire des serveurs web, des scripts d'automatisation, des outils en ligne de commande, et bien plus — le tout en JavaScript.
+Dans ce cours, on construit des applications web complètes. 
+Node.js nous permet d'utiliser <Highlight>un seul langage pour le client et le serveur</Highlight>. 
+
+### Navigateur vs Node.js
+
+JavaScript est le même langage dans les deux cas, mais l'environnement disponible change radicalement.
+
+| | Navigateur | Node.js |
+|---|---|---|
+| **Moteur** | V8 (Chrome), SpiderMonkey (Firefox), JavaScriptCore (Safari) | V8 |
+| **Contexte** | Page web (onglet) | Processus sur une machine |
+| **APIs disponibles** | `document`, `window`, `fetch`, DOM | `fs`, `http`, `path`, `process` |
+| **Accès système** | ❌ Interdit (bac à sable) | ✅ Fichiers, réseau, OS |
+| **Modules** | `<script type="module">` | CommonJS ou ES Modules |
+| **Utilisation** | Interfaces utilisateur | Serveurs, scripts, outils |
+
+---
+
+## Installation de Node.js
+
+Rendez-vous sur [nodejs.org](https://nodejs.org) et téléchargez la version **LTS** (*Long Term Support*) — c'est la version stable recommandée pour le développement.
+
+L'installateur inclut deux programmes :
+
+- **`node`** — l'interpréteur JavaScript
+- **`npm`** — le gestionnaire de paquets (*Node Package Manager*)
+
+### Vérification
+
+Après l'installation, ouvrez un terminal et vérifiez :
+
+```bash
+node --version    # ex: v22.15.0
+npm --version     # ex: 10.9.2
+```
+
+### Exécuter du JavaScript
+
+**Exécuter un fichier :**
+```bash
+node mon_script.js
+```
+
+**Mode interactif (REPL)** — utile pour tester rapidement :
+```bash
+node
+> 2 + 2
+4
+> "Bonjour".toUpperCase()
+'BONJOUR'
+> .exit
+```
+
+
+---
+
+## Démarrer un projet Node.js
+
+Un projet Node.js est un dossier contenant au minimum un fichier `package.json` qui décrit le projet et ses dépendances.
+
+### Initialisation
+
+```bash
+mkdir mon-projet
+cd mon-projet
+npm init -y
+```
+
+La commande `npm init` crée le fichier `package.json` qui définit les informations de ton projet (nom, version, description, auteur) ainsi que la liste de ses dépendances. Le drapeau `-y` répond *oui* à toutes les questions et génère le fichier avec des valeurs par défaut. Sans `-y`, npm pose une série de questions de façon interactive.
+
+{/* <MarginNote type="astuce" titre="Trouver un paquet">
+Le registre npm contient plus de 2 millions de paquets open source. On les recherche sur [npmjs.com](https://www.npmjs.com/) — chaque paquet y a une page avec sa documentation, ses versions et ses statistiques de téléchargement.
+</MarginNote> */}
+
+### Installer un paquet
+
+```bash
+npm install express
+```
+
+Cette commande fait trois choses :
+
+1. Télécharge `express` et toutes ses dépendances dans le dossier `node_modules/`
+2. Ajoute `express` à la section `dependencies` de `package.json`
+3. Crée ou met à jour `package-lock.json` (verrouillage des versions exactes)
+
+On peut en installer plusieurs d'un coup, ou cibler une version précise :
+
+```bash
+npm install lodash axios            # plusieurs paquets à la fois
+npm install express@4.21.0          # une version spécifique
+```
+
+### Dépendances de production vs de développement
+
+Toutes les dépendances ne servent pas au même moment. 
+Certaines sont nécessaires pour que l'application *fonctionne* (ex: un serveur a besoin d'Express). D'autres ne servent qu'*au développement* : formateurs de code, outils de test, linters. 
+
+On les sépare avec `-D` (ou `--save-dev`) :
+
+```bash
+npm install -D prettier             # ajouté à devDependencies
+```
+
+<Highlight>Les `devDependencies` ne sont pas installées en production</Highlight>. Cette distinction réduit le poids de l'environnement de production.
+
+### Dépendances globales
+
+Certains outils en ligne de commande s'installent globalement, pour être disponibles depuis n'importe quel dossier (projet) :
+
+```bash
+npm install -g <paquet>
+```
+
+<MarginNote type="attention" titre="Les paquets globaux échappent au projet">
+Un paquet installé globalement n'apparaît **pas** dans le `package.json` du projet. Il ne sera donc pas réinstallé par un collègue qui clone le dépôt. Pour les outils propres à un projet, préférez une installation locale lancée via `npx` (voir plus bas).
+</MarginNote>
+
+---
+
+## Structure d'un projet Node.js
+
+```
+mon-projet/
+├── node_modules/        ← dépendances (généré, ne pas modifier)
+├── src/
+│   ├── index.js         ← point d'entrée
+│   ├── routes/          ← définition des routes
+│   └── utils/           ← fonctions utilitaires
+├── public/              ← fichiers statiques (HTML, CSS, images)
+├── package.json         ← manifeste du projet
+├── package-lock.json    ← versions verrouillées exactes
+└── .gitignore           ← doit contenir node_modules/
+```
+
+### Règles essentielles
+
+****`node_modules/`** doit toujours apparaître dans `.gitignore`.** Ce dossier peut contenir des milliers de fichiers et se régénère avec `npm install`. On ne versionne jamais les dépendances elles-mêmes — seulement la *liste* des dépendances dans `package.json`.
+
+<MarginNote type="erreur">
+Commiter `node_modules/` dans Git est une erreur fréquente lorsqu'on débute avec Node.js. 
+Ce dossier peut peser des centaines de Mo et contenir plus de 50 000 fichiers.  
+**Vérifiez toujours qu'il est présent dans votre `.gitignore`.**
+</MarginNote>
+
+****`package-lock.json`** doit être versionné.** Il garantit que tous les développeurs d'une équipe installent exactement les mêmes versions.
+
+Un collaborateur qui clone le projet fait simplement :
+
+```bash
+git clone <url>
+cd mon-projet
+npm install        # recrée node_modules/ à partir de package.json
+```
+
+---
+
+## Le fichier `package.json`
+
+C'est le manifeste du projet — l'équivalent du `pom.xml` en Java. Il décrit le projet, ses dépendances, et ses scripts.
+
+```json
+{
+  "name": "mon-serveur",
+  "version": "1.0.0",
+  "description": "Serveur web pour IFT3225",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.0"
+  }
+}
+```
+
+### Champs importants
+
+**`"type": "module"`** — Active la syntaxe `import`/`export` (ES Modules). 
+Sans cette ligne, Node.js utilise l'ancien système `require()` (CommonJS). 
+
+<MarginNote type="syntaxe" titre="ES Modules obligatoire">
+Chaque `package.json` dans ce cours doit contenir `"type": "module"`. Sans cette ligne, écrire `import` et `export` provoquent
+une erreur `SyntaxError: Cannot use import statement outside a module`.
+</MarginNote>
+
+**`"scripts"`** — Définit des commandes personnalisées exécutables via `npm run <nom>`. Le script `"dev"` ci-dessus utilise `--watch`, un mode qui redémarre automatiquement le serveur quand un fichier change.
+
+**`"dependencies"`** — Les paquets nécessaires en production (le serveur en a besoin pour fonctionner).
+
+**`"devDependencies"`** — Les paquets utilisés seulement pendant le développement (formateurs, outils de test, etc.).
+
+**Le préfixe `^`** dans les versions (ex: `"^4.21.0"`) signifie « compatible avec 4.21.0 » — npm pourra installer 4.21.5 ou 4.22.0, mais pas 5.0.0.
+
+
+---
+
+## Les scripts npm
+
+Les scripts automatisent les tâches répétitives du projet : lancer le serveur, exécuter les tests, construire le code. On les définit dans la section `"scripts"` du `package.json` :
+
+```json
+"scripts": {
+  "start": "node src/index.js",
+  "dev": "node --watch src/index.js",
+  "test": "node --test"
+}
+```
+
+On les exécute avec `npm run <nom>` :
+
+```bash
+npm run dev
+```
+
+<MarginNote type="astuce" titre="Raccourcis et découverte">
+`start` et `test` sont des scripts spéciaux : on peut les lancer sans `run` (`npm start`, `npm test`). 
+Pour tous les autres, `run` est requis. Et `npm run` seul, sans nom, **liste tous les scripts disponibles** du projet.
+</MarginNote>
+
+### Passer des arguments à un script
+
+Le `--` sépare les arguments destinés à npm de ceux destinés au script lui-même :
+
+```bash
+npm run dev -- --port 8080
+```
+
+Tout ce qui suit `--` est transmis tel quel à la commande du script.
+
+
+---
+
+## `npx` — exécuter sans installer
+
+`npx` est livré avec npm. Il exécute un paquet **sans l'installer globalement** : npx le télécharge temporairement, l'exécute, puis le retire. C'est idéal pour les outils qu'on utilise rarement ou une seule fois.
+
+```bash
+npx create-astro@latest mon-site    # échafauder un projet Astro
+npx prettier --write .              # formater sans installer prettier globalement
+```
+
+<MarginNote type="astuce" titre="npx vs installation globale">
+Avant `npx`, on installait les outils d'échafaudage globalement (`npm install -g`), ce qui encombrait la machine de versions obsolètes. `npx` exécute toujours la *dernière* version à la demande — plus rien à maintenir globalement.
+</MarginNote>
+
+
+
+---
+
+## `npm ci` — installation reproductible
+
+`npm install` peut modifier le `package-lock.json` (par exemple si une nouvelle version compatible est sortie). En production et en intégration continue (CI), on veut au contraire une installation **strictement identique** à chaque fois.
+
+```bash
+npm ci      # installe exactement ce qui est dans package-lock.json
+```
+
+**`npm ci` ignore le `package.json` pour les versions et suit le `package-lock.json` à la lettre.** 
+Il supprime d'abord `node_modules/` pour repartir propre, et échoue si le lock et le `package.json` ne sont pas cohérents.  
+C'est la commande à utiliser dans les scripts de déploiement et les pipelines CI.
+
+
+---
+
+## Référence des commandes
+
+Un récapitulatif des commandes npm les plus utilisées, pour consultation rapide.
+
+### Projet et dépendances
+
+| Commande | Effet |
+|---|---|
+| `npm init -y` | Crée un `package.json` avec les valeurs par défaut |
+| `npm install` (ou `npm i`) | Installe toutes les dépendances du `package.json` |
+| `npm install <pkg>` | Installe un paquet et l'ajoute aux `dependencies` |
+| `npm install <pkg>@<version>` | Installe une version précise |
+| `npm install -D <pkg>` | Installe en `devDependencies` |
+| `npm install -g <pkg>` | Installe globalement (hors projet) |
+| `npm uninstall <pkg>` | Retire un paquet |
+| `npm ci` | Installation reproductible depuis le lock (CI/déploiement) |
+
+### Mise à jour et inspection
+
+| Commande | Effet |
+|---|---|
+| `npm update` | Met à jour selon les plages de versions autorisées |
+| `npm update <pkg>` | Met à jour un paquet précis |
+| `npm outdated` | Liste les paquets ayant une version plus récente |
+| `npm list` | Affiche l'arbre des dépendances locales |
+| `npm list -g` | Affiche les paquets installés globalement |
+| `npm -v` | Affiche la version de npm |
+
+### Scripts et exécution
+
+| Commande | Effet |
+|---|---|
+| `npm run <script>` | Exécute un script défini dans `package.json` |
+| `npm run` | Liste tous les scripts disponibles |
+| `npm start` | Raccourci pour `npm run start` |
+| `npm test` | Raccourci pour `npm run test` |
+| `npm run <script> -- <args>` | Passe des arguments au script |
+| `npx <pkg>` | Exécute un paquet sans l'installer |
+
+{/* 
+### Équivalences avec d'autres écosystèmes
+
+| Action | npm | pip (Python) | Maven (Java) |
+|---|---|---|---|
+| Installer les dépendances | `npm install` | `pip install -r requirements.txt` | `mvn install` |
+| Ajouter un paquet | `npm install <pkg>` | `pip install <pkg>` | Modifier `pom.xml` |
+| Exécuter un script | `npm run dev` | `python manage.py runserver` | `mvn exec:java` |
+| Paquet dev seulement | `npm install -D <pkg>` | Section `[dev]` dans `pyproject.toml` | `<scope>test</scope>` | */}
+
+<MarginNote type="plusloin">
+La documentation officielle de npm ([docs.npmjs.com](https://docs.npmjs.com/)) couvre chaque commande en détail, avec tous les drapeaux. Pour comprendre le versionnage sémantique (`^`, `~`, les plages), voir [semver.org](https://semver.org/lang/fr/).
+</MarginNote>

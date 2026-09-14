@@ -1,0 +1,150 @@
+---
+/**
+ * MarginNote.astro
+ *
+ * Note périphérique : un commentaire latéral, léger, qui glisse depuis la
+ * droite quand il entre dans le champ de vision. Volontairement étroit et
+ * aligné à droite sur grand écran (pleine largeur sur mobile), pour se
+ * distinguer de <Aside>, qui est le bloc structurant en pleine colonne.
+ *
+ * Règle de complémentarité avec <Aside> :
+ *   - Aside       : annotation structurante et persistante (définition,
+ *                   syntaxe, danger, résultat attendu, prérequis...).
+ *   - MarginNote  : aparté léger, en passant, qu'on peut survoler sans
+ *                   perdre le fil. Jeu de types réduit, sans recoupement
+ *                   avec les types d'Aside.
+ *
+ * Types disponibles :
+ *   - rappel     (teal)    rappeler un concept vu ailleurs
+ *   - astuce     (violet)  un conseil pratique rapide
+ *   - attention  (ambre)   une petite mise en garde en passant
+ *   - lien       (bleu)    pointer brièvement vers une ressource
+ *
+ * Usage (dans MDX) :
+ *   <MarginNote type="rappel">
+ *     On avait vu `$_POST` au chapitre précédent.
+ *   </MarginNote>
+ */
+
+interface Props {
+  type?: "rappel" | "astuce" | "attention" | "lien";
+  titre?: string;
+}
+
+const { type = "rappel", titre } = Astro.props;
+
+const ICON = {
+  rappel: "↩",
+  astuce: "✦",
+  attention: "▲",
+  lien: "→",
+};
+
+const TITRE_DEFAUT = {
+  rappel: "Rappel",
+  astuce: "Astuce",
+  attention: "Bon à savoir",
+  lien: "À consulter",
+};
+
+const titreFinal = titre ?? TITRE_DEFAUT[type] ?? null;
+---
+
+<aside class={`mn mn--${type}`} data-margin-note>
+  <div class="mn__rail" aria-hidden="true"></div>
+  <div class="mn__body">
+    {titreFinal && (
+      <div class="mn__head">
+        <span class="mn__icon" aria-hidden="true">{ICON[type]}</span>
+        <span class="mn__titre">{titreFinal}</span>
+      </div>
+    )}
+    <div class="mn__content"><slot /></div>
+  </div>
+</aside>
+
+<script>
+  function initMarginNotes() {
+    const notes = document.querySelectorAll("[data-margin-note]");
+    if (notes.length === 0) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("mn--in");
+            io.unobserve(entry.target);
+          }
+        });
+      },
+      { rootMargin: "0px 0px -15% 0px", threshold: 0.2 }
+    );
+    notes.forEach((n) => io.observe(n));
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initMarginNotes);
+  } else {
+    initMarginNotes();
+  }
+  document.addEventListener("astro:page-load", initMarginNotes);
+</script>
+
+<style>
+  .mn {
+    --mn-color: var(--sl-color-accent, #0d9488);
+    position: relative;
+    /* Étroit et poussé à droite : lecture périphérique, distincte du bloc Aside. */
+    /* max-width: 22rem; */
+    /* margin: 1.6rem 0 1.6rem auto; */
+    padding-left: 16px;
+    opacity: 0;
+    transform: translateX(24px);
+    transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+                transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .mn--in { opacity: 1; transform: translateX(0); }
+
+  /* Sur écran étroit, on repasse en pleine largeur. */
+  @media (max-width: 50rem) {
+    .mn { max-width: none; margin-right: 0; }
+  }
+
+  .mn--rappel { --mn-color: #0d9488; }
+  .mn--astuce { --mn-color: #7c3aed; }
+  .mn--attention { --mn-color: #d97706; }
+  .mn--lien { --mn-color: #2563eb; }
+
+  .mn__rail {
+    position: absolute; left: 0; top: 4px; bottom: 4px; width: 3px;
+    border-radius: 3px; background: var(--mn-color);
+    transform: scaleY(0); transform-origin: top;
+    transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.15s;
+  }
+  .mn--in .mn__rail { transform: scaleY(1); }
+
+  .mn__body {
+    background: color-mix(in srgb, var(--mn-color) 5%, transparent);
+    border-radius: 0 10px 10px 0; padding: 12px 16px;
+  }
+  .mn__head { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+  .mn__icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 3px; border-radius: 5px;
+    background: var(--mn-color); color: #fff; font-size: 0.7rem; font-weight: 700; flex-shrink: 0;
+  }
+  .mn__titre {
+    font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--mn-color);
+  }
+  .mn__content { font-size: 0.92rem; line-height: 1.6; color: var(--sl-color-text, #1a1a2e); }
+  .mn__content :global(p:last-child) { margin-bottom: 0; }
+  .mn__content :global(p:first-child) { margin-top: 0; }
+  .mn__content :global(code) {
+    font-size: 0.86em; background: color-mix(in srgb, var(--mn-color) 12%, transparent);
+    padding: 1px 5px; border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mn { opacity: 1; transform: none; transition: none; }
+    .mn__rail { transform: scaleY(1); transition: none; }
+  }
+</style>

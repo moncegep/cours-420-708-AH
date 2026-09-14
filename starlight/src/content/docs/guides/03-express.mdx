@@ -1,0 +1,574 @@
+---
+
+title: "Prise en main d'Express"
+
+description: "Construire un serveur Express pas à pas : du « Hello World » à une petite API modulaire, en simulant chaque requête avant de l'implémenter."
+
+---
+
+import MarginNote from "../../../components/MarginNote.astro";
+import Highlight from "../../../components/Highlight.astro";
+import ExchangeSimulator from "../../../components/react/ExchangeSimulator";
+
+<MarginNote type="prerequis">
+
+Ce guide suppose Node.js installé et une familiarité avec les bases de JavaScript (fonctions, objets, modules `import`/`export`) ainsi que le modèle requête-réponse de HTTP.
+
+</MarginNote>
+
+## Qu'est-ce qu'Express ?
+
+<img src="https://upload.wikimedia.org/wikipedia/commons/6/64/Expressjs.png" alt="Logo d'Express.js" />
+
+Express est un **cadriciel web minimaliste et flexible** pour Node.js. Il aide à recevoir des requêtes HTTP et à construire les réponses d'une application Web ou d'une API.
+
+- **Minimaliste ?** Express ajoute une couche légère aux fonctionnalités HTTP de Node.js. Il fournit notamment le routage, les *middlewares* et des méthodes pratiques pour construire les réponses.
+
+- **Flexible ?** Express n'impose ni ORM ni structure de projet complète. Il faut donc choisir comment organiser les routes, l'accès aux données et les autres responsabilités. <Highlight>Cette liberté facilite le démarrage, mais elle exige aussi de prendre de bonnes décisions de conception.</Highlight>
+
+### Express dans son écosystème
+
+Express n'est pas le seul cadriciel serveur de l'écosystème JavaScript. Quelques solutions courantes adoptent des orientations différentes :
+
+| Cadriciel | Orientation générale |
+|---|---|
+| **Express** | Noyau minimal, API simple et vaste écosystème de middlewares |
+| **Fastify** | Performance, extensibilité et validation fondée sur des schémas |
+| **Koa** | Petit noyau centré sur la composition de middlewares |
+| **NestJS** | Architecture applicative plus structurée et davantage de conventions |
+
+<MarginNote type="plusloin">
+
+Les performances ne dépendent pas uniquement du cadriciel. Le type d'application, la base de données, les traitements et le déploiement comptent aussi. Ici, Express sert surtout à apprendre des concepts transférables.
+
+</MarginNote>
+
+<Highlight couleur="ambre">Les concepts étudiés ici, comme les routes, les paramètres, les middlewares et les codes de statut, se retrouvent dans de nombreux cadriciels Web.</Highlight>
+
+---
+
+## Ce qu'on va construire
+
+Tout au long de ce guide, on construit le **serveur d'une petite API pour un réseau de boîtes à livres**, le même domaine que dans l'exemple de conception d'API.
+
+L'objectif est d'**exposer des boîtes à livres réparties dans la ville pour qu'une application puisse les lister, en consulter une, en ajouter, les mettre à jour et les supprimer**.
+
+On y arrive **par étapes**, en partant de presque rien. À chaque étape, <Highlight>on simule d'abord la requête à gérer, puis on écrit le code qui la traite.</Highlight> Voir l'échange avant de l'implémenter aide à garder en tête le résultat recherché. À la fin, on aura une petite API CRUD en mémoire, découpée proprement en modules.
+
+## Installation
+
+Express 5 exige Node.js 18 ou une version plus récente. Dans un nouveau dossier, initialisez le projet, activez les modules ES et installez Express :
+
+```bash
+npm init -y
+npm pkg set type=module
+npm install express
+```
+
+<MarginNote type="syntaxe" titre="ES Modules">
+
+On utilise `import` plutôt que `require`. Assurez-vous que votre `package.json` contient `"type": "module"`, sinon Node refusera la syntaxe `import`.
+
+</MarginNote>
+
+---
+
+## Étape 1 : le serveur minimal
+
+Avant d'écrire quoi que ce soit, voici l'échange le plus simple possible :
+
+> Le client demande la racine `/`, le serveur répond avec un peu de texte.
+
+Lancez la simulation pour voir le trajet.
+
+<ExchangeSimulator scenario="express-hello" compact client:visible />
+
+C'est tout ce qu'on veut pour l'instant : une requête `GET /`, une réponse `200` avec du texte. Voici le code qui produit exactement cet échange :
+
+```js
+// index.js
+import express from "express";
+const app = express();
+app.get("/", (req, res) => {
+  res.send("Bonjour depuis Express!");
+});
+app.listen(3000, () => {
+  console.log("Serveur démarré sur http://localhost:3000");
+});
+```
+
+Décortiquons les quatre gestes fondateurs :
+
+- **`express()`** crée l'application, l'objet central qui orchestre tout.
+
+- **`app.get(chemin, gestionnaire)`** enregistre une *route* : « quand une requête `GET` arrive sur ce chemin, exécute cette fonction ».
+
+- **`(req, res) => { ... }`** est le *gestionnaire* (*handler*) associé à la requête `GET /`. Il reçoit la requête (`req`) et construit la réponse (`res`). Ici, `res.send()` renvoie du texte.
+
+- **`app.listen(port)`** démarre le serveur et le met à l'écoute sur un port.
+
+<MarginNote type="rappel" titre="Méthodes HTTP">
+
+`GET` est l'une des *méthodes* (ou *verbes*) HTTP. Dans notre API, `GET` lit une ressource, `POST` en crée une, `PUT` la remplace et `DELETE` la supprime. Express propose une méthode correspondante : `app.get`, `app.post`, `app.put` et `app.delete`.
+
+</MarginNote>
+
+<MarginNote type="definition" titre="Route">
+
+Une *route* associe une méthode HTTP et un chemin à une fonction. `app.get("/", handler)` dit : « pour un GET sur `/`, appelle `handler` ». C'est le cœur du routage.
+
+</MarginNote>
+
+Lancez avec `node index.js`, ouvrez dans un navigateur `http://localhost:3000`. Vous devriez voir le texte *Bonjour depuis Express!*
+
+<Highlight couleur="ambre">Ces instructions forment le squelette d'un serveur Express.</Highlight> La suite ajoute progressivement des routes et des traitements.
+
+---
+
+## Étape 2 : répondre en JSON
+
+Une API peut renvoyer plusieurs types de contenu. Ici, on veut exposer des **données structurées** avec une route `GET /boites` qui retourne un tableau de boîtes en JSON. Simulez l'échange :
+
+<ExchangeSimulator scenario="express-json" compact client:visible />
+
+La réponse n'est plus une phrase mais un tableau d'objets. Le code ajoute une route et utilise `res.json()` au lieu de `res.send()` :
+
+```js
+// index.js
+import express from "express";
+const app = express();
+// Nos données, en mémoire pour l'instant
+const boites = [
+  { id: 14, nom: "Boîte du parc Laurier", quartier: "Plateau" },
+  { id: 7, nom: "Coin Fabre / Saint-Zotique", quartier: "Rosemont" },
+  { id: 3, nom: "Place Saint-Hubert", quartier: "Plateau" },
+];
+app.get("/", (req, res) => {
+  res.send("Bonjour depuis Express!");
+});
+app.get("/boites", (req, res) => {
+  res.json(boites);          // sérialise le tableau en JSON
+});
+app.listen(3000);
+```
+
+<MarginNote type="astuce" titre="res.json() vs res.send()">
+
+`res.json()` sérialise un objet ou un tableau JavaScript en JSON et pose l'en-tête `Content-Type: application/json`.
+
+`res.send()` choisit le type de réponse selon la valeur reçue. Pour envoyer un objet ou un tableau depuis une API, préférez généralement `res.json()` : l'intention est claire et l'en-tête est correct.
+
+</MarginNote>
+
+> Le fichier a maintenant **deux routes**. Express parcourt les gestionnaires dans leur ordre de déclaration. Un gestionnaire peut terminer la réponse ou transmettre le contrôle au suivant avec `next()`.
+
+---
+
+## Étape 3 : un paramètre dans l'URL
+
+Pour obtenir *une* boîte précise, on met son identifiant dans le chemin : `GET /boites/14`. Express capture cette partie variable comme un **paramètre de route**.
+
+> Mais que se passe-t-il si la boîte n'existe pas ? Simulez les deux cas avec `id=14` (existe), puis `id=99` (n'existe pas) :
+
+<ExchangeSimulator scenario="express-param" compact client:visible />
+
+La simulation montre les deux issues : `200` avec la boîte, ou `404` si l'`id` ne correspond à rien.
+
+<Highlight>Gérer le cas « introuvable » fait partie de la conception ; ce n'est pas un détail optionnel.</Highlight>
+
+Voici le code pour cette requête :
+
+```js
+app.get("/boites/:id", (req, res) => {
+  const id = Number(req.params.id);          // :id arrive comme texte
+  const boite = boites.find((b) => b.id === id);
+  if (!boite) {
+    return res.status(404).json({ error: "Boîte introuvable", id });
+  }
+  res.json(boite);
+});
+```
+
+Les points importants :
+
+- **`:id`** dans le chemin déclare un paramètre. Express le rend disponible dans **`req.params.id`**.
+
+- Les paramètres de route sont des **chaînes de caractères** : `req.params.id` vaut `"14"`, pas `14`. D'où le `Number(...)`.
+
+- **`res.status(404)`** fixe le code de statut avant d'envoyer le corps. Sans ça, Express renvoie `200` par défaut.
+
+- Le **`return`** devant `res.status(404)` est essentiel : il arrête le gestionnaire. <Highlight>Sans lui, le code continuerait et tenterait d'envoyer une deuxième réponse</Highlight>.
+
+<MarginNote type="rappel" titre="Codes de statut HTTP">
+
+Le code de statut résume le résultat de la requête. `2xx` indique un succès (`200 OK`, `201 Created`), `4xx` un problème dans la requête ou la ressource demandée (`400 Bad Request`, `404 Not Found`) et `5xx` une erreur du serveur. Renvoyer le bon code fait partie du contrat de l'API : un client s'y fie pour réagir.
+
+</MarginNote>
+
+<MarginNote type="erreur" titre="Valider l'identifiant">
+
+`Number(req.params.id)` suffit pour cet exemple, mais une application réelle devrait aussi vérifier que le résultat est un entier positif. Une valeur comme `abc` devient `NaN` et devrait normalement produire une réponse `400 Bad Request`.
+
+</MarginNote>
+
+---
+
+## Étape 4 : filtrer avec des paramètres de requête
+
+Le paramètre de route (`:id`) identifie *une* ressource précise, mais souvent, on veut plutôt *filtrer* une liste : « les boîtes du Plateau ».
+
+Pour ça, on n'invente pas nécessairement une nouvelle route. On ajoute des **paramètres de requête** (*query parameters*) à l'URL, après un `?`.
+
+Simulez `GET /boites?quartier=Plateau` (videz le champ pour tout obtenir) :
+
+<ExchangeSimulator scenario="express-query" compact client:visible />
+
+<MarginNote type="rappel" titre="Paramètre de route vs de requête">
+
+Deux façons de passer de l'information dans l'URL. Le *paramètre de route* (`/boites/:id`) fait partie du chemin et identifie une ressource.
+
+Le *paramètre de requête* (`/boites?quartier=Plateau`) vient après le `?` et sert à filtrer, trier ou paginer.
+
+</MarginNote>
+
+C'est la **même route** `GET /boites` qu'à l'étape 2. On l'enrichit pour lire les paramètres de requête. Express les expose dans **`req.query`** :
+
+```js
+app.get("/boites", (req, res) => {
+  const quartier = typeof req.query.quartier === "string"
+    ? req.query.quartier.trim()
+    : "";
+  // Pas de filtre demandé : on renvoie tout
+  if (!quartier) {
+    return res.json(boites);
+  }
+  // Filtre demandé : on renvoie le sous-ensemble
+  const filtrees = boites.filter(
+    (b) => b.quartier.toLowerCase() === quartier.toLowerCase()
+  );
+  res.json(filtrees);
+});
+```
+
+Les points importants :
+
+- **`req.query`** est un objet rassemblant tout ce qui suit le `?`. Pour `?quartier=Plateau&tri=nom`, on a `req.query.quartier` et `req.query.tri`.
+
+- Dans cette route, `quartier` est **optionnel** : sans filtre, l'API renvoie la liste complète. Une autre API pourrait toutefois définir certains paramètres de requête comme obligatoires.
+
+- Les valeurs proviennent de l'URL et ne doivent pas être utilisées sans validation. Selon le parseur et la forme de la requête, une valeur de `req.query` peut notamment être une chaîne ou un tableau. Ici, on accepte seulement une chaîne.
+
+<Highlight>Un même endpoint peut servir plusieurs besoins grâce à ses paramètres de requête</Highlight> : tout lister, filtrer par quartier, puis éventuellement trier ou paginer, sans multiplier les routes.
+
+---
+
+## Étape 5 : lire le corps d'une requête POST
+
+Jusqu'ici, on a seulement *lu* des données. Pour en **créer**, le client envoie un `POST` avec un corps JSON.
+
+> Express ne transforme pas automatiquement un corps JSON en objet JavaScript. Il faut activer un *middleware* pour le faire. Simulez la création, puis essayez de vider le champ `nom` pour voir l'erreur `400` :
+
+<ExchangeSimulator scenario="express-post" compact client:visible />
+
+> Après un `POST` réussi, relancez le `GET /boites` dans la simulation : **la nouvelle boîte y est.**
+
+Le code introduit deux nouveautés, `express.json()` et `req.body` :
+
+```js
+// Active la lecture des corps JSON; à placer avant les routes
+app.use(express.json());
+app.post("/boites", (req, res) => {
+  const { nom, quartier } = req.body ?? {};
+  if (typeof nom !== "string" || !nom.trim()) {
+    return res.status(400).json({ error: "Le champ 'nom' est requis." });
+  }
+  const prochainId = Math.max(0, ...boites.map((boite) => boite.id)) + 1;
+  const nouvelle = {
+    id: prochainId,
+    nom: nom.trim(),
+    quartier: typeof quartier === "string" && quartier.trim()
+      ? quartier.trim()
+      : "Inconnu",
+  };
+  boites.push(nouvelle);
+  res.location(`/boites/${nouvelle.id}`).status(201).json(nouvelle);
+});
+```
+
+<MarginNote type="definition" titre="Middleware">
+
+Un middleware est une fonction qui participe au cycle requête-réponse. Il peut lire ou modifier `req` et `res`, terminer la réponse, ou transmettre le contrôle avec `next()`. `express.json()` lit un corps JSON valide et rend sa valeur disponible dans `req.body`.
+
+</MarginNote>
+
+<MarginNote type="erreur" titre="L'ordre compte">
+
+`app.use(express.json())` doit venir **avant** les routes qui lisent `req.body`. Express exécute ses middlewares et ses routes dans l'ordre de déclaration. Placé après ces routes, ce middleware ne pourrait pas préparer leur `req.body`.
+
+</MarginNote>
+
+Le statut **`201 Created`** signale qu'une ressource a été créée. L'en-tête `Location`, ajouté ici avec `res.location()`, indique l'URL de la nouvelle ressource. Ces éléments rendent la réponse plus explicite pour le client.
+
+---
+
+## Étape 6 : modifier et supprimer
+
+Il reste deux opérations pour couvrir le cycle de vie complet d'une ressource : **remplacer** une boîte existante (`PUT`) et la **supprimer** (`DELETE`).
+
+La simulation regroupe les quatre verbes : créez, listez, modifiez avec `PUT /boites/14`, puis supprimez avec `DELETE /boites/7` :
+
+<ExchangeSimulator scenario="express-post" compact client:visible />
+
+<MarginNote type="rappel" titre="PUT, DELETE et l'idempotence">
+
+`PUT` remplace une ressource : l'appeler dix fois avec le même corps laisse le serveur dans le même état qu'un seul appel. Il est *idempotent*.
+
+`DELETE` l'est aussi. Une seconde suppression peut répondre `404`, mais elle ne modifie pas davantage l'état du serveur.
+
+</MarginNote>
+
+Le code ajoute les deux gestionnaires.
+
+- `PUT` ressemble à un `POST` ciblé par `:id`
+
+- `DELETE` retire l'élément et répond `204` :
+
+```js
+// Remplacer une boîte existante
+app.put("/boites/:id", (req, res) => {
+  const id = Number(req.params.id);
+  const boite = boites.find((b) => b.id === id);
+  if (!boite) {
+    return res.status(404).json({ error: "Boîte introuvable", id });
+  }
+  const { nom, quartier } = req.body ?? {};
+  if (typeof nom !== "string" || !nom.trim()) {
+    return res.status(400).json({ error: "Le champ 'nom' est requis." });
+  }
+  boite.nom = nom.trim();
+  boite.quartier = typeof quartier === "string" && quartier.trim()
+    ? quartier.trim()
+    : "Inconnu";
+  res.json(boite);                           // 200 avec la version à jour
+});
+// Supprimer une boîte
+app.delete("/boites/:id", (req, res) => {
+  const id = Number(req.params.id);
+  const index = boites.findIndex((b) => b.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Boîte introuvable", id });
+  }
+  boites.splice(index, 1);
+  res.status(204).end();                     // 204 No Content : succès, rien à renvoyer
+});
+```
+
+Les points à retenir :
+
+- **`PUT` combine** un paramètre de route (*quelle* boîte) et un corps (*les nouvelles* valeurs).
+
+- **`res.status(204).end()`** : le `204 No Content` signale un succès sans corps. On termine avec `.end()` plutôt que `.json()` car il n'y a rien à sérialiser.
+
+<Highlight>Avec GET, POST, PUT et DELETE, on couvre les quatre opérations du CRUD</Highlight> : *Create, Read, Update, Delete*. Ce modèle est fréquent dans les API centrées sur des ressources, même si toutes les API ne se limitent pas au CRUD.
+
+---
+
+## Le fichier devient trop gros
+
+À ce stade, `index.js` contient la création de l'app, les données, et toutes les routes.
+
+Pour quatre routes, ça va. Mais une vraie API en a des dizaines, et tout empiler dans un fichier devient vite ingérable.
+
+On va séparer les responsabilités en modules :
+
+```
+mon-serveur/
+├── index.js            ← démarrage du serveur uniquement
+├── src/
+│   ├── app.js          ← création de l'app + middlewares
+│   ├── data/
+│   │   └── boites.js   ← les données (plus tard : la base)
+│   └── routes/
+│       └── boites.js   ← toutes les routes /boites
+└── package.json
+```
+
+L'idée directrice : <Highlight>chaque fichier a une seule raison de changer.</Highlight>
+
+### Le routeur : `src/routes/boites.js`
+
+Express fournit un objet `Router`, un système de routage modulaire qui regroupe des routes liées et que l'on monte ensuite dans l'application principale.
+
+```js
+// src/routes/boites.js
+import { Router } from "express";
+import { boites } from "../data/boites.js";
+const router = Router();
+function lireId(valeur) {
+  const id = Number(valeur);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+router.get("/", (req, res) => {
+  const quartier = typeof req.query.quartier === "string"
+    ? req.query.quartier.trim()
+    : "";
+  const resultat = quartier
+    ? boites.filter(
+        (boite) => boite.quartier.toLowerCase() === quartier.toLowerCase()
+      )
+    : boites;
+  res.json(resultat);
+});
+router.get("/:id", (req, res) => {
+  const id = lireId(req.params.id);
+  if (id === null) {
+    return res.status(400).json({ error: "L'identifiant doit être un entier positif." });
+  }
+  const boite = boites.find((b) => b.id === id);
+  if (!boite) {
+    return res.status(404).json({ error: "Boîte introuvable", id });
+  }
+  res.json(boite);
+});
+router.post("/", (req, res) => {
+  const { nom, quartier } = req.body ?? {};
+  if (typeof nom !== "string" || !nom.trim()) {
+    return res.status(400).json({ error: "Le champ 'nom' est requis." });
+  }
+  const prochainId = Math.max(0, ...boites.map((boite) => boite.id)) + 1;
+  const nouvelle = {
+    id: prochainId,
+    nom: nom.trim(),
+    quartier: typeof quartier === "string" && quartier.trim()
+      ? quartier.trim()
+      : "Inconnu",
+  };
+  boites.push(nouvelle);
+  res.location(`${req.baseUrl}/${nouvelle.id}`).status(201).json(nouvelle);
+});
+router.put("/:id", (req, res) => {
+  const id = lireId(req.params.id);
+  if (id === null) {
+    return res.status(400).json({ error: "L'identifiant doit être un entier positif." });
+  }
+  const boite = boites.find((b) => b.id === id);
+  if (!boite) {
+    return res.status(404).json({ error: "Boîte introuvable", id });
+  }
+  const { nom, quartier } = req.body ?? {};
+  if (typeof nom !== "string" || !nom.trim()) {
+    return res.status(400).json({ error: "Le champ 'nom' est requis." });
+  }
+  boite.nom = nom.trim();
+  boite.quartier = typeof quartier === "string" && quartier.trim()
+    ? quartier.trim()
+    : "Inconnu";
+  res.json(boite);
+});
+router.delete("/:id", (req, res) => {
+  const id = lireId(req.params.id);
+  if (id === null) {
+    return res.status(400).json({ error: "L'identifiant doit être un entier positif." });
+  }
+  const index = boites.findIndex((b) => b.id === id);
+  if (index === -1) {
+    return res.status(404).json({ error: "Boîte introuvable", id });
+  }
+  boites.splice(index, 1);
+  res.status(204).end();
+});
+export default router;
+```
+
+<MarginNote type="astuce" titre="Chemins relatifs au point de montage">
+
+Dans le routeur, les chemins sont relatifs à l'endroit où on le *monte*. Ici, on écrit `router.get("/")` et `router.get("/:id")`, pas `/boites`. C'est l'application qui ajoute le préfixe `/boites`. Le routeur n'a donc pas besoin de connaître son chemin de montage.
+
+</MarginNote>
+
+### Les données : `src/data/boites.js`
+
+```js
+// src/data/boites.js
+export const boites = [
+  { id: 14, nom: "Boîte du parc Laurier", quartier: "Plateau" },
+  { id: 7, nom: "Coin Fabre / Saint-Zotique", quartier: "Rosemont" },
+  { id: 3, nom: "Place Saint-Hubert", quartier: "Plateau" },
+];
+```
+
+Isoler les données prépare le terrain pour la suite, mais ce tableau n'est pas encore une véritable couche d'accès aux données. Le passage à MongoDB rendra notamment les opérations asynchrones et demandera d'adapter les routes. Plus tard, une couche de service ou de dépôt permettra de mieux isoler ce changement.
+
+### L'assemblage : `src/app.js`
+
+```js
+// src/app.js
+import express from "express";
+import boitesRouter from "./routes/boites.js";
+const app = express();
+app.use(express.json());
+// Monte le routeur sous le préfixe /boites
+app.use("/boites", boitesRouter);
+// Aucune route précédente n'a répondu
+app.use((req, res) => {
+  res.status(404).json({ error: "Route introuvable." });
+});
+// Centralise les erreurs; les quatre paramètres sont nécessaires
+app.use((err, req, res, next) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+  console.error(err);
+  const status = Number.isInteger(err.status) ? err.status : 500;
+  const message = status < 500
+    ? "La requête est invalide."
+    : "Erreur interne du serveur.";
+  res.status(status).json({ error: message });
+});
+export default app;
+```
+
+<Highlight>C'est `app.use("/boites", boitesRouter)` qui donne leur préfixe aux routes du module.</Highlight> Le `router.get("/:id")` répond donc à `GET /boites/:id`. On peut monter d'autres routeurs (`/livres`, `/utilisateurs`) de la même façon, chacun dans son fichier.
+
+Les deux derniers middlewares s'exécutent seulement si les routes précédentes n'ont pas terminé la réponse ou si une erreur leur est transmise. Le gestionnaire d'erreurs se reconnaît à ses **quatre paramètres** : `(err, req, res, next)`.
+
+<MarginNote type="plusloin" titre="Erreurs asynchrones avec Express 5">
+
+Dans Express 5, si un gestionnaire `async` lance une exception ou retourne une Promise rejetée, Express transmet automatiquement cette erreur au middleware de gestion d'erreurs.
+
+</MarginNote>
+
+### Le démarrage : `index.js`
+
+```js
+// index.js
+import app from "./src/app.js";
+app.listen(3000, () => {
+  console.log("Serveur démarré sur http://localhost:3000");
+});
+```
+
+Le point d'entrée du projet ne fait plus qu'une chose : démarrer le serveur.
+
+---
+
+## Ce qu'on a construit
+
+On est parti d'un serveur minimal et on a abouti à une petite API structurée en mémoire :
+
+- un **serveur minimal** (`app.get`, `res.send`, `app.listen`) ;
+- des réponses **JSON** (`res.json`) ;
+- des **paramètres de route** (`:id`, `req.params`) avec gestion du `404` ;
+- des **paramètres de requête** (`?quartier=…`, `req.query`) pour filtrer une liste ;
+- la **lecture de corps** POST (`express.json`, `req.body`) avec `201` et `400` ;
+- la **modification et la suppression** (`PUT`, `DELETE`) avec `200` et `204`, ce qui complète le **CRUD** ;
+- une **décomposition en modules** (routeur, données, application et démarrage) où chaque fichier a une responsabilité claire ;
+- des réponses JSON cohérentes pour les routes inconnues et les erreurs inattendues.
+
+<Highlight couleur="ambre">Cette structure modulaire donne des points d'extension clairs pour ajouter ensuite une base de données, de l'authentification ou d'autres ressources.</Highlight> **C'est le squelette qu'on étendra pour le projet.**
+
+<MarginNote type="plusloin">
+
+La [documentation officielle d'Express](https://expressjs.com/) couvre le routage, les middlewares et la gestion d'erreurs en détail. Pour tester vos routes sans navigateur, des outils comme Postman ou Bruno peuvent envoyer différents types de requêtes, notamment des `POST` avec un corps et des en-têtes.
+
+</MarginNote>

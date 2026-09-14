@@ -1,0 +1,28 @@
+{
+  "name": "starlight",
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "@astrojs/react": "^6.0.5",
+    "@astrojs/starlight": "^0.42.0",
+    "@lucide/astro": "^1.42.0",
+    "astro": "^7.2.10",
+    "astro-mermaid": "^2.1.0",
+    "lucide-react": "^1.42.0",
+    "mermaid": "^11.17.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "sharp": "^0.35.3"
+  },
+  "allowScripts": {
+    "esbuild": true
+  }
+}

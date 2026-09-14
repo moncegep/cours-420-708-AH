@@ -1,0 +1,59 @@
+---
+layout: ../../layouts/DocLayout.astro
+title: "Cache et diffusion"
+draft: true
+description: "La famille de la vitesse : Redis (cache côté serveur, store de sessions partagé) et CDN (cache au bord qui court-circuite le serveur). On y range ce qu'on relit souvent — au prix de l'invalidation."
+---
+
+import MarginNote from "../../components/MarginNote.astro";
+import Highlight from "../../components/Highlight.astro";
+import Checkpoint from "../../components/Checkpoint.astro";
+import Consideration from "../../components/Consideration.astro";
+
+<MarginNote type="prerequis">
+Cette fiche approfondit une famille vue dans [Choisir une stratégie de persistance](/notes/persistance).
+</MarginNote>
+
+Pour ce qu'on **relit souvent**, on évite de refaire le travail à chaque requête : un **cache** garde la réponse toute prête. Il accélère — mais il introduit <Highlight>le problème difficile de l'invalidation</Highlight> : décider *quand* le vider, sous peine de servir des données périmées.
+
+## Redis — cache côté serveur
+
+Redis est un magasin **clé→valeur en mémoire**, très rapide. Le serveur lit d'abord le cache ; en cas de **HIT**, la base n'est pas touchée.
+
+<Consideration tech="redis" />
+
+```js
+await redis.set("boite:42", JSON.stringify(boite), "EX", 60); // expire en 60 s
+const cache = await redis.get("boite:42");
+```
+
+Le `EX 60` (TTL de 60 s) est une invalidation **par le temps** ; pour les données qui changent à l'écriture, il faut **invalider explicitement** la clé. Redis sert aussi de **store de sessions partagé** entre serveurs — c'est lui qui lève la limite de la mémoire serveur.
+
+<MarginNote type="lien" titre="Lien avec la mémoire serveur">
+Voir [Mémoire serveur](/notes/persistance-serveur) : `express-session` branché sur un store Redis devient partageable et survit aux redémarrages.
+</MarginNote>
+
+## CDN — cache au bord
+
+Un CDN réplique des réponses **au plus près de l'utilisateur**. Sur un `GET` public et cacheable, la réponse part d'un nœud proche : <Highlight couleur="ambre">le serveur d'origine n'est pas sollicité du tout</Highlight>.
+
+<Consideration tech="cdn" />
+
+```http
+Cache-Control: public, max-age=300
+```
+
+C'est ce que rend visible l'explorateur du panorama : avec un CDN, la requête se résout au bord (`Client → CDN → Client`), alors qu'avec Redis elle atteint le serveur, qui consulte le cache au lieu de la base. Réservé au **public et peu variable** (pas le per-utilisateur), et il faut **purger** à la mise à jour.
+
+## Redis ou CDN
+
+- **Redis** : cache *côté serveur*, pour des données dynamiques, par-utilisateur ou calculées ; sert aussi aux sessions et aux files légères.
+- **CDN** : cache *au bord*, pour du contenu **public** et des fichiers statiques servis massivement — il décharge complètement l'origine.
+
+<Checkpoint question="La page publique « palmarès des boîtes les plus actives » est consultée des milliers de fois par minute, identique pour tout le monde, et n'a pas à être à la seconde près. Quel cache, et pourquoi ?">
+Un **CDN**. La réponse est **publique** (la même pour tous) et tolère un léger délai : un `Cache-Control: public, max-age=…` permet au CDN de la servir au bord, **sans toucher le serveur d'origine**, ce qui absorbe le trafic massif. Redis aiderait aussi, mais la requête atteindrait quand même le serveur ; pour un contenu public identique, le bord est le bon endroit. On purge ou on raccourcit le `max-age` lorsque le palmarès change.
+</Checkpoint>
+
+<MarginNote type="lien" titre="Revenir au panorama">
+Pour comparer cette famille aux autres, retournez à [Choisir une stratégie de persistance](/notes/persistance).
+</MarginNote>

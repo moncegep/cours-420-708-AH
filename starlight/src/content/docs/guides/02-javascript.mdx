@@ -1,0 +1,500 @@
+---
+title: "JavaScript : modules, fetch et asynchrone"
+description: "Concepts avancés de JavaScript : organiser le code en modules, effectuer des requêtes HTTP avec fetch, et maîtriser l'asynchrone."
+---
+
+import MarginNote from "../../../components/MarginNote.astro";
+import Highlight from "../../../components/Highlight.astro";
+
+<MarginNote type="prerequis">
+Cette page présente des concepts de programmation avancés avec le langage JavaScript. 
+On y aborde les trois piliers du JavaScript moderne côté projet : les modules, la programmation asynchrone et les requêtes réseau.
+</MarginNote>
+
+## Modules `import` / `export`
+
+Les modules permettent de découper le code en fichiers réutilisables. 
+<Highlight>Chaque fichier est un module isolé, c'est-à-dire, aucune variable ou fonction n'est partagé si on ne l'exporte pas explicitement.</Highlight> 
+C'est ce qui permet de construire une application à partir de petits morceaux plus ou moins indépendants plutôt que d'un seul fichier géant.
+
+### Pourquoi découper en modules
+
+Imaginons une petite application qui interroge une API de cours universitaires. Sans modules, tout vit dans un fichier. Avec les modules, on sépare les responsabilités :
+
+```
+mon-app/
+├── index.js          ← point d'entrée : orchestre le tout
+├── api.js            ← fonctions qui parlent à l'API
+├── format.js         ← fonctions d'affichage et de mise en forme
+└── package.json      ← "type": "module"
+```
+
+Chaque fichier a un rôle clair. `api.js` regroupe ce qui concerne l’API, `format.js` 
+sait présenter des données et `index.js` les coordonne. Si les détails de communication
+avec l’API changent, les modifications peuvent généralement être concentrées dans `api.js`. 
+<Highlight couleur="ambre">Cette séparation repose sur le même principe qu’on retrouvera côté serveur avec Express : découper par responsabilité.</Highlight>
+
+### Exporter
+
+Un **export nommé** expose une valeur sous son nom. On peut en avoir plusieurs par fichier :
+
+```js
+// format.js
+
+// Export nommé — on peut en avoir plusieurs par fichier
+export const SEPARATEUR = " · ";
+
+export function formaterCours(cours) {
+  return `${cours.code}${SEPARATEUR}${cours.name}`;
+}
+
+export function formaterListe(cours) {
+  return cours.map(formaterCours).join("\n");
+}
+```
+
+On peut aussi regrouper les exports à la fin du fichier, ce qui peut être utile pour voir d'un coup d'œil ce que le module expose :
+
+```js
+// format.js
+const SEPARATEUR = " · ";
+function formaterCours(cours) { return `${cours.code}${SEPARATEUR}${cours.name}`; }
+function formaterListe(cours) { return cours.map(formaterCours).join("\n"); }
+
+export { SEPARATEUR, formaterCours, formaterListe };
+```
+
+### Export par défaut
+
+Un fichier peut désigner **une** valeur principale avec `export default`. Un seul par fichier :
+
+```js
+// api.js
+export default function creerClient(baseUrl) {
+  return {
+    async cours() {
+      const reponse = await fetch(`${baseUrl}/courses`);
+      return reponse.json();
+    }
+  };
+}
+```
+
+<MarginNote type="astuce" titre="Nommé ou par défaut ?">
+Export *nommé* quand le module expose plusieurs choses de même importance (une boîte à outils). Export *par défaut* quand le module a une vocation unique (une fonction principale, une classe, un routeur Express). Beaucoup de modules combinent les deux : un défaut + quelques nommés.
+</MarginNote>
+
+### Importer
+
+L'import doit refléter la façon dont la valeur a été exportée :
+
+```js
+// index.js
+
+// Import nommé : les noms doivent correspondre exactement
+import { formaterCours, formaterListe } from "./format.js";
+
+// Import par défaut : on choisit librement le nom
+import creerClient from "./api.js";
+
+// Combiner défaut et nommés depuis un même module
+import creerClient, { SEPARATEUR } from "./module.js";
+
+// Renommer un import nommé avec `as`
+import { formaterCours as fmt } from "./format.js";
+```
+
+<MarginNote type="erreur" titre="L'extension .js est obligatoire">
+En ES Modules natifs (Node avec `"type": "module"`), les imports de fichiers locaux doivent 
+inclure l'extension : `./format.js`, pas `./format`. C'est une différence avec les anciens 
+projets CommonJS ou les bundlers qui la rendaient optionnelle.
+</MarginNote>
+
+### Importer un paquet npm
+
+Pour un paquet installé via npm, on importe par son nom, sans chemin ni extension :
+
+```js
+import express from "express";
+```
+
+Node résout le paquet `express` installé dans le projet, notamment à partir de `node_modules`. <Highlight>La règle : un chemin (`./`, `../`) pour vos fichiers, un nom nu pour les paquets npm.</Highlight>
+
+### Mettre les pièces ensemble
+
+Voici comment `index.js` peut orchestrer les modules de notre arborescence sans connaître leurs détails internes :
+
+```js
+// index.js
+import creerUrlCours from "./api.js";
+import { formaterCours } from "./format.js";
+
+const url = creerUrlCours(
+  "https://planifium-api.onrender.com/api/v1",
+  "IFT3225"
+);
+
+const cours = { code: "IFT3225", name: "Technologies de l'Internet" };
+
+console.log(url);
+console.log(formaterCours(cours));
+```
+
+
+Chaque module ignore les détails des autres. `index.js` ne sait pas comment `api.js` construit une URL ni comment `format.js` met en forme les données. Il connaît seulement ce que ces modules exposent. C’est le découplage en action.
+
+Plus loin, nous ferons évoluer `api.js` pour qu’il effectue réellement une requête réseau.
+
+<MarginNote type="rappel" titre="Rappel">
+Pour que les `import`/`export` fonctionnent dans Node.js, le `package.json` doit contenir `"type": "module"`. Sans cette ligne, Node attend la syntaxe CommonJS (`require`).
+</MarginNote>
+
+---
+
+## `async` / `await`
+
+### Le problème
+
+Certaines opérations prennent du temps : accès réseau, lecture de fichiers ou requêtes à une base de données. Dans un contexte JavaScript donné, le code s’exécute principalement sur un seul fil d’exécution. Si ce fil attendait passivement chaque opération lente, l’application pourrait devenir inutilisable.
+
+<Highlight>Les API JavaScript exposent donc généralement les opérations d’entrée-sortie sous une forme asynchrone : l’opération est lancée, puis le programme peut poursuivre d’autres tâches pendant l’attente.</Highlight>
+
+La question devient : comment exprimer « quand le résultat arrive, fais ceci »? JavaScript a connu trois réponses successives. 
+Les voir dans l'ordre aide à comprendre pourquoi `async`/`await` existe.
+
+### Étape 1 — Les callbacks (l'ancienne façon)
+
+Historiquement, de nombreuses API demandaient de fournir une fonction à exécuter une fois l’opération terminée. Cette fonction est un *callback*.
+
+```js
+// Style callback (ancien) — lire un fichier puis le traiter
+lireFichier("cours.json", (erreur, contenu) => {
+  if (erreur) {
+    console.error("Échec:", erreur);
+    return;
+  }
+  console.log(contenu);
+});
+```
+
+Cela reste lisible pour une seule opération. Mais dès qu’on enchaîne plusieurs opérations dépendantes, 
+par exemple lire une configuration, appeler une API, analyser la réponse puis sauvegarder le résultat, 
+les callbacks peuvent s’imbriquer :
+
+```js
+lireFichier("config.json", (err, config) => {
+  appelerApi(config.url, (err, reponse) => {
+    parserReponse(reponse, (err, data) => {
+      sauvegarder(data, (err, resultat) => {
+        console.log("Enfin terminé!");
+      });
+    });
+  });
+});
+```
+
+<MarginNote type="attention" titre="Callback hell">
+Cette imbrication en escalier vers la droite s'appelle le *callback hell* (ou *pyramid of doom*). Le code devient illisible, et la gestion d'erreurs — répétée à chaque niveau — est un cauchemar à maintenir.
+</MarginNote>
+
+### Étape 2 — Les Promises
+
+Une **Promise** est un objet représentant le résultat futur d’une opération asynchrone. Elle est d’abord en attente (*pending*), puis se termine soit avec une valeur (*fulfilled*), soit avec une erreur (*rejected*).
+
+Supposons maintenant que les mêmes opérations retournent des Promises. On peut les enchaîner avec `.then()` :
+
+```js
+lireFichier("config.json")
+  .then((config) => fetch(config.url))
+  .then((reponse) => reponse.json())
+  .then((data) => sauvegarder(data))
+  .then((resultat) => console.log("Terminé!"))
+  .catch((err) => console.error("Échec:", err));
+```
+
+Le code se lit verticalement plutôt que de dériver vers la droite, et un seul `.catch()` attrape toutes les erreurs de la chaîne. C'est déjà beaucoup mieux.
+
+### Étape 3 — `async` / `await`
+
+`async`/`await` fournit une syntaxe plus directe au-dessus des Promises. La mécanique reste la même, mais le code ressemble davantage à une suite d’instructions ordinaires. C’est la forme que nous utiliserons principalement dans ce cours.
+
+```js
+async function preparer() {
+  const config = await lireFichier("config.json");
+  const reponse = await fetch(config.url);
+  const data = await reponse.json();
+  const resultat = await sauvegarder(data);
+  console.log("Terminé!");
+}
+```
+
+Le même enchaînement devient une simple suite de lignes. Chaque `await` suspend l’exécution de cette fonction jusqu’à ce que la Promise se termine, sans bloquer tout le programme.
+
+### Ce que `await` fait vraiment
+
+Sans `await`, on récupère la Promise elle-même (la « boîte »), mais pas son contenu :
+
+```js
+const resultat = operationAsynchrone();
+console.log(resultat); // Promise { <pending> }
+```
+
+Avec `await`, on attend la résolution de la Promise et l’expression produit sa valeur :
+
+```js
+async function charger() {
+  const resultat = await operationAsynchrone();
+  console.log(resultat);
+  return resultat;
+}
+```
+
+<MarginNote type="definition" titre="await">
+`await` suspend l’exécution de la fonction `async` jusqu’à ce que la Promise se termine. Pendant cette suspension, le runtime peut continuer à traiter d’autres tâches. Il ne s’agit donc pas de bloquer le fil d’exécution en attendant passivement.
+</MarginNote>
+
+### Les règles à retenir
+
+- `await` ne s'utilise que dans une fonction marquée `async`...
+- ...sauf au niveau supérieur d'un module (`"type": "module"`), où le *top-level await* est permis :
+
+```js
+const resultat = await operationAsynchrone();
+```
+
+- Une fonction `async` retourne **toujours** une Promise, même si elle semble retourner une valeur simple. Son résultat doit donc généralement être utilisé avec `await` ou `.then()`.
+
+### Séquentiel ou concurrent ?
+
+Deux `await` successifs signifient que la deuxième opération commence seulement lorsque la première est terminée :
+
+```js
+const cours = await chargerCours();
+const programmes = await chargerProgrammes();
+```
+
+C’est nécessaire lorsque la deuxième opération dépend de la première. Si les deux opérations sont indépendantes, on peut les lancer ensemble avec `Promise.all` :
+
+```js
+const [cours, programmes] = await Promise.all([
+  chargerCours(),
+  chargerProgrammes(),
+]);
+```
+
+<Highlight>`await` améliore la lisibilité, mais il ne faut pas rendre séquentielles des opérations indépendantes qui peuvent avancer en même temps.</Highlight>
+
+
+### Gestion d'erreurs avec `try` / `catch`
+
+Là où les Promises utilisent `.catch()`, avec `async`/`await`, on peut utiliser le `try`/`catch` ordinaire du langage — un autre avantage de lisibilité :
+
+```js
+async function chargerCours() {
+  try {
+    const reponse = await fetch("https://planifium-api.onrender.com/api/v1/courses");
+
+    if (!reponse.ok) {
+      throw new Error(`HTTP ${reponse.status}`);
+    }
+
+    const data = await reponse.json();
+    return data;
+  } catch (erreur) {
+    console.error("Impossible de charger les cours:", erreur.message);
+    return [];
+  }
+}
+```
+
+### Exemple complet
+
+```js
+async function afficherCours(sigle) {
+  try {
+    const url = `https://planifium-api.onrender.com/api/v1/courses/${sigle}`;
+    const reponse = await fetch(url);
+
+    if (!reponse.ok) {
+      throw new Error(`Cours non trouvé (${reponse.status})`);
+    }
+
+    const cours = await reponse.json();
+    console.log(`${cours.code} — ${cours.name}`);
+  } catch (erreur) {
+    console.error(erreur.message);
+  }
+}
+
+// Appel (top-level await dans un module)
+await afficherCours("IFT3225");
+```
+
+---
+
+## `fetch` — requêtes HTTP
+
+`fetch` est l'API standard pour effectuer des requêtes HTTP en JavaScript. Elle est disponible nativement dans les navigateurs et dans Node.js (depuis la version 18). On l'utilisera pour interroger des API réelles.
+
+<MarginNote type="exemple" titre="Une API pour s'exercer">
+Les exemples ci-dessous interrogent **Planifium**, une API ouverte qui expose les cours et programmes de l'UdeM. Sa documentation interactive est à [planifium-api.onrender.com/docs](https://planifium-api.onrender.com/docs) — explorez-y les routes et la forme exacte des réponses avant de coder.
+</MarginNote>
+
+### Requête GET
+
+```js
+const reponse = await fetch("https://planifium-api.onrender.com/api/v1/courses");
+const data = await reponse.json();
+console.log(data);
+```
+
+<Highlight>Deux étapes distinctes :</Highlight> `fetch` retourne un objet `Response` (les en-têtes, le statut), puis `.json()` lit le corps et le parse en objet JavaScript. Le `.json()` est lui-même asynchrone — d'où le second `await`.
+
+### Vérifier le statut
+
+C'est le piège le plus courant avec `fetch` : <Highlight couleur="ambre">il ne lance **pas** d'erreur pour les réponses 4xx ou 5xx</Highlight> — seulement pour les vrais problèmes réseau (serveur injoignable, DNS, coupure). Une réponse `404` est, du point de vue de `fetch`, une requête *réussie*. Il faut donc vérifier `response.ok` soi-même :
+
+```js
+const reponse = await fetch(url);
+
+if (!reponse.ok) {
+  throw new Error(`Erreur HTTP : ${reponse.status}`);
+}
+
+const data = await reponse.json();
+```
+
+<MarginNote type="erreur" titre="fetch ne rejette pas sur 404">
+Pour qui vient de bibliothèques comme `requests` (Python), c'est déroutant : un `404` ou un `500` passe le `await fetch` sans broncher. Toujours tester `reponse.ok` (vrai pour les statuts 200–299) avant de lire le corps.
+</MarginNote>
+
+### Requête POST
+
+Pour envoyer des données, on passe un second argument décrivant la méthode, les en-têtes et le corps :
+
+```js
+const reponse = await fetch("https://planifium-api.onrender.com/api/v1/courses", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    sigle: "IFT3225",
+    titre: "Technologies de l'internet",
+    session: "E26"
+  })
+});
+
+const resultat = await reponse.json();
+```
+
+Deux points sont faciles à oublier : le corps doit être **sérialisé** avec `JSON.stringify`, car on n’envoie pas directement un objet JavaScript, et l’en-tête `Content-Type: application/json` indique au serveur comment interpréter ce corps.
+
+<MarginNote type="attention" titre="Une route d’écriture n’est pas toujours disponible">
+
+L’exemple précédent montre la syntaxe générale d’une requête `POST`. Selon l’API utilisée, la route peut être protégée, inexistante ou réservée à certains utilisateurs. Vérifiez toujours la documentation avant d’essayer de modifier des données.
+
+</MarginNote>
+
+**### Exemple complet**
+
+On peut maintenant réunir modules, `fetch` et `async`/`await`. Faisons évoluer `api.js` pour qu’il charge réellement un cours :
+
+```js
+// api.js
+export default function creerClient(baseUrl) {
+  return {
+    async cours(sigle) {
+      const reponse = await fetch(`${baseUrl}/courses/${sigle}`);
+
+      if (!reponse.ok) {
+        throw new Error(`Cours non trouvé (${reponse.status})`);
+      }
+
+      return reponse.json();
+    },
+  };
+}
+```
+
+Puis `index.js` orchestre le tout :
+
+```js
+// index.js
+import creerClient from "./api.js";
+import { formaterCours } from "./format.js";
+
+const client = creerClient(
+  "https://planifium-api.onrender.com/api/v1"
+);
+
+try {
+  const cours = await client.cours("IFT3225");
+  console.log(formaterCours(cours));
+} catch (erreur) {
+  console.error(erreur.message);
+}
+```
+
+On retrouve ici les trois idées de la page : chaque fichier expose une responsabilité claire, `fetch` communique avec le serveur et `await` permet d’exprimer cette attente sans transformer le programme en suite de callbacks imbriqués.
+
+
+---
+
+## Aller plus loin : Axios
+
+`fetch` est natif et suffit dans la majorité des cas. Mais beaucoup de projets utilisent **Axios**, une bibliothèque externe qui simplifie quelques aspects récurrents.
+
+<MarginNote type="definition" titre="Axios">
+Une bibliothèque cliente HTTP populaire (à installer via `npm install axios`). Elle enveloppe le réseau dans une API plus concise que `fetch`, avec quelques commodités intégrées.
+</MarginNote>
+
+On l'installe puis on l'importe comme tout paquet npm :
+
+```bash
+npm install axios
+```
+
+```js
+import axios from "axios";
+
+const reponse = await axios.get("https://planifium-api.onrender.com/courses");
+console.log(reponse.data);   // déjà parsé — pas de .json()
+```
+
+Trois différences qui expliquent sa popularité :
+
+- **Pas d'étape `.json()`** — Axios parse automatiquement la réponse JSON et la place dans `reponse.data`. Une étape de moins qu'avec `fetch`.
+- **Erreur automatique sur 4xx/5xx** — contrairement à `fetch`, Axios *rejette* la promesse sur un statut d'erreur. Le `catch` se déclenche sans qu'on ait à tester `reponse.ok`.
+- **Configuration concise** — en-têtes, corps et options tiennent dans un objet, et le corps n'a pas besoin d'être sérialisé à la main.
+
+Comparons un POST, côté `fetch` et côté Axios :
+
+```js
+// fetch — natif, verbeux
+const r = await fetch(url, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ sigle: "IFT3225" })
+});
+if (!r.ok) throw new Error(`HTTP ${r.status}`);
+const data = await r.json();
+```
+
+```js
+// axios — concis
+const r = await axios.post(url, { sigle: "IFT3225" });
+const data = r.data;          // parsé ; rejette tout seul sur erreur
+```
+
+<Highlight>`fetch` ne demande aucune dépendance ; Axios demande une installation mais réduit le code répétitif.</Highlight> 
+
+> **Pour ce cours, `fetch` est amplement suffisant.**
+
+
+<MarginNote type="plusloin">
+Pour approfondir JavaScript, trois ressources essentielles :
+- **MDN Web Docs** (developer.mozilla.org) — la référence la plus complète et fiable.
+- **Eloquent JavaScript** (eloquentjavascript.net) — un livre gratuit en ligne, excellent pour les concepts en profondeur.
+- **JavaScript.info** — tutoriel moderne et progressif avec exercices interactifs.
+</MarginNote>
