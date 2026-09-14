@@ -1,15 +1,14 @@
 ---
-layout: ../../layouts/DocLayout.astro
 title: "Le DOM avancé"
 draft: true
 description: "Aller plus loin avec le DOM : le cycle d'un événement (capture, cible, bouillonnement), la délégation, les formulaires, la liaison de données (one-way et two-way) et les templates."
 ---
 
-import MarginNote from "../../components/MarginNote.astro";
-import Highlight from "../../components/Highlight.astro";
-import Checkpoint from "../../components/Checkpoint.astro";
-import EventPropagation from "../../components/react/EventPropagation.jsx";
-import TwoWayBinding from "../../components/react/TwoWayBinding.jsx";
+import MarginNote from "../../../components/MarginNote.astro";
+import Highlight from "../../../components/Highlight.astro";
+import Checkpoint from "../../../components/Checkpoint.astro";
+import EventPropagation from "../../../components/react/EventPropagation.jsx";
+import TwoWayBinding from "../../../components/react/TwoWayBinding.jsx";
 
 <MarginNote type="prerequis">
 Cette page fait suite à [Les bases du DOM](/guides/tuto-dom-1). On suppose que vous savez sélectionner, lire, modifier et créer des éléments, et attacher un écouteur simple avec `addEventListener`. On va maintenant plus loin : le cycle des événements, les formulaires, la liaison de données, les templates et les web components.

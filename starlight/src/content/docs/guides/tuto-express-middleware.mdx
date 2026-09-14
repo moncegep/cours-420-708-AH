@@ -1,14 +1,13 @@
 ---
-layout: ../../layouts/DocLayout.astro
 title: "Les middlewares dans Express"
 draft: true
 description: "Le middleware comme instanciation du patron pipe-et-filtre : une chaîne de filtres à responsabilité unique que la requête traverse. Le même patron dans les microservices, son implémentation Express (req, res, next), son enchaînement, et la spécification d'un middleware d'authentification et d'autorisation adossé à MongoDB. Avec pipeline animé et diagramme de séquence interactif."
 ---
 
-import MarginNote from "../../components/MarginNote.astro";
-import Highlight from "../../components/Highlight.astro";
-import Checkpoint from "../../components/Checkpoint.astro";
-import MiddlewarePipeline from "../../components/react/MiddlewarePipeline.jsx";
+import MarginNote from "../../../components/MarginNote.astro";
+import Highlight from "../../../components/Highlight.astro";
+import Checkpoint from "../../../components/Checkpoint.astro";
+import MiddlewarePipeline from "../../../components/react/MiddlewarePipeline.jsx";
 
 <MarginNote type="prerequis">
 Cette fiche suppose les bases d'Express (voir [Prise en main d'Express](/notes/express-prise-en-main)) et reprend, en section 5, la distinction de [Identité, authentification, autorisation](/notes/identite-authentification-autorisation).
