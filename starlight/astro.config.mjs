@@ -28,10 +28,10 @@ export default defineConfig({
 						{ label: "Prise en main d'Express", slug: "guides/03-express" },
 					],
 				},
-				{
-					label: 'Reference',
-					items: [{ autogenerate: { directory: 'reference' } }],
-				},
+				// {
+				// 	label: 'Reference',
+				// 	items: [{ autogenerate: { directory: 'reference' } }],
+				// },
 			],
 		}),
 		react(),
