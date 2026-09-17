@@ -28,6 +28,12 @@ export default defineConfig({
 						{ label: "Prise en main d'Express", slug: "guides/03-express" },
 					],
 				},
+				{
+					label: 'Exercices',
+					items: [
+						{ label: "Prise en main d'Express", slug: "exercices/01-express" }
+					],
+				},
 				// {
 				// 	label: 'Reference',
 				// 	items: [{ autogenerate: { directory: 'reference' } }],

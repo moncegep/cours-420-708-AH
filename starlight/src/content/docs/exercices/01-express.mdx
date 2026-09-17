@@ -1,0 +1,220 @@
+---
+title: "Prise en main d'Express : trois exercices d'API"
+description: "Trois exercices progressifs pour découvrir Express et le développement d'API : CRUD, validation, et mise à jour avec notion de propriétaire."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Checkpoint from '../../../components/Checkpoint.astro';
+
+Ces trois exercices servent à prendre en main **Express.js**. 
+pour la construction d'**APIs**. 
+Chaque exercice ajoute une notion : d'abord les opérations de base, ensuite la validation des données reçues, enfin la mise à jour d'une ressource avec la question « qui a le droit de la modifier ».
+
+<Aside type="note" title="Et les microservices ?">
+Le cours porte sur les microservices web, mais ces exercices restent volontairement sur **un seul service**. L'objectif ici est la mécanique d'Express et d'une API. Le découpage en plusieurs services viendra plus tard, une fois ces réflexes acquis.
+</Aside>
+
+## Objectifs
+
+Au terme de ces exercices, tu devrais pouvoir :
+
+1. Définir des routes Express pour les principaux verbes HTTP et répondre en JSON.
+2. Valider les données d'une requête et renvoyer des erreurs claires.
+3. Mettre à jour une ressource en tenant compte de son propriétaire.
+
+## Prérequis
+
+- Node.js installé (version 18 ou plus récente).
+- npm (fourni avec Node.js).
+- Un client HTTP pour envoyer des requêtes : **Bruno** ou **Postman**.
+
+## Mise en place
+
+Crée un dossier de projet, puis installe Express :
+
+```bash
+mkdir table-api
+cd table-api
+npm init -y
+npm install express
+```
+
+Crée un fichier `server.js` avec un serveur minimal :
+
+```js
+import express from 'express';
+
+const app = express();
+app.use(express.json()); // interprète le corps JSON des requêtes
+
+app.get('/', (req, res) => {
+  res.json({ message: 'Le serveur répond.' });
+});
+
+const PORT = 3000;
+app.listen(PORT, () => {
+  console.log(`Serveur démarré sur http://localhost:${PORT}`);
+});
+```
+
+<Aside type="tip" title="Modules ES">
+Pour utiliser `import` plutôt que `require`, ajoute `"type": "module"` dans ton fichier `package.json`.
+</Aside>
+
+Lance le serveur avec `node server.js`, puis envoie une requête `GET http://localhost:3000/` depuis Bruno ou Postman. Tu devrais recevoir le message JSON.
+
+Arborescence suggérée pour toute la page (un seul fichier suffit au début) :
+
+```
+table-api/
+  package.json
+  server.js
+```
+
+## Mini-glossaire
+
+Ces termes reviennent dans les trois exercices.
+
+- **Route** (ou *endpoint*, point d'accès) : l'association d'un verbe HTTP et d'un chemin, par exemple `GET /students`. C'est l'adresse à laquelle le client s'adresse.
+- **Verbe HTTP** : l'action demandée. On utilise surtout `GET` (lire), `POST` (créer), `PUT` (remplacer), `DELETE` (supprimer).
+- **Code de statut** : un nombre à trois chiffres qui résume le résultat. Par exemple 200 (succès), 201 (créé), 400 (requête invalide), 404 (introuvable), 403 (interdit).{/* - **Middleware** : une fonction qui s'exécute entre la réception de la requête et l'envoi de la réponse. `express.json()` en est un : il lit le corps JSON de la requête. */}
+- **En mémoire** (*in-memory*) : les données sont stockées dans une variable JavaScript. Elles disparaissent quand le serveur redémarre. C'est suffisant pour s'entraîner, sans base de données.
+
+---
+
+## Exercice 1 — CRUD d'une liste d'étudiants
+
+**Objectif.** Construire les quatre opérations de base sur une ressource.
+
+{/* **Nouvelle notion.** Le **CRUD** : *Create, Read, Update, Delete*, soit les quatre actions fondamentales sur des données, associées ici aux verbes HTTP. */}
+
+Crée une API permettant de gérer une liste d'étudiants stockée en mémoire. Chaque étudiant possède un `id` (généré par le serveur), un `nom` et un `courriel`. Expose les cinq routes suivantes :
+
+- `GET /students` : renvoie la liste complète.
+- `GET /students/:id` : renvoie un étudiant, ou 404 s'il n'existe pas.
+- `POST /students` : ajoute un étudiant et renvoie l'objet créé avec le code 201.
+- `PUT /students/:id` : remplace `nom` et `courriel`, ou 404 s'il n'existe pas.
+- `DELETE /students/:id` : supprime l'étudiant, ou 404 s'il n'existe pas.
+
+**Étapes suggérées.**
+
+1. Déclare la structure de données et un compteur d'identifiants :
+
+   ```js
+   let students = [];
+   let nextId = 1;
+   ```
+
+2. Écris les routes une à une, en testant chacune dans ton client avant de passer à la suivante.
+3. Pour retrouver un étudiant, `students.find(s => s.id === Number(req.params.id))`. Le paramètre d'URL arrive sous forme de texte, d'où la conversion en nombre.
+
+<Checkpoint title="Critères de validation">
+- `POST /students` avec `{ "nom": "Ada", "courriel": "ada@exemple.ca" }` répond **201** et renvoie l'objet avec un `id`.
+- `GET /students` répond **200** et contient l'étudiant créé.
+- `GET /students/1` répond **200** ; `GET /students/999` répond **404**.
+- `PUT /students/1` avec de nouvelles valeurs répond **200** et les modifications sont visibles au prochain `GET`.
+- `DELETE /students/1` répond **200** (ou 204) ; un second `DELETE /students/1` répond **404**.
+</Checkpoint>
+
+{/* <Aside type="caution" title="Piège fréquent">
+Oublier `app.use(express.json())`. Sans ce middleware, `req.body` reste `undefined` et toutes les créations échouent silencieusement.
+</Aside> */}
+
+---
+
+## Exercice 2 — Système d'inscription
+
+**Objectif.** Refuser proprement les données invalides.
+
+{/* **Nouvelle notion.** La **validation** du corps de la requête : vérifier les données reçues *avant* de les enregistrer, et répondre par une erreur explicite quand elles ne conviennent pas. */}
+
+La *Brasserie Pete* organise des ateliers et veut recueillir les inscriptions. 
+Une inscription comporte un `nom`, un `courriel` et une `cohorte`. 
+
+Expose une route `POST /inscriptions` qui n'enregistre l'inscription que si les données sont valides :
+
+- `nom` : présent et non vide.
+- `courriel` : présent et contenant un `@`.
+- `cohorte` : présente et faisant partie de la liste autorisée, par exemple `["matin", "soir"]`.
+
+En cas d'erreur, réponds avec le code **400** et un corps qui décrit *tous* les problèmes rencontrés, pas seulement le premier :
+
+```json
+{
+  "errors": [
+    { "champ": "courriel", "message": "Le courriel doit contenir un @." },
+    { "champ": "cohorte", "message": "La cohorte doit être matin ou soir." }
+  ]
+}
+```
+
+Si tout est valide, enregistre l'inscription en mémoire et réponds **201** avec l'objet créé.
+{/* 
+**Étapes suggérées.**
+
+1. Écris une fonction `validerInscription(data)` qui retourne un tableau d'erreurs (vide si tout va bien). La logique de validation reste ainsi séparée de la route.
+2. Dans la route, appelle cette fonction. Si le tableau n'est pas vide, réponds `res.status(400).json({ errors })`.
+3. Sinon, ajoute l'inscription et réponds 201. */}
+
+<Checkpoint title="Critères de validation">
+- `POST /inscriptions` avec un objet complet et valide répond **201**.
+- Un `courriel` sans `@` fait répondre **400** avec une erreur sur le champ `courriel`.
+- Une `cohorte` absente ou hors liste fait répondre **400** avec une erreur sur le champ `cohorte`.
+- Une requête à la fois sans `nom` et sans `courriel` répond **400** avec **deux** erreurs.
+</Checkpoint>
+
+{/* <Aside type="caution" title="Piège fréquent">
+Renvoyer un statut 200 même en cas d'erreur, en se contentant de mettre un message dans le corps. Le code de statut fait partie de la réponse : un refus se signale par un code de la famille 4xx, ce qui permet au client de réagir correctement.
+</Aside> */}
+
+---
+
+## Exercice 3 — Commentaires modifiables
+
+**Objectif.** Mettre à jour une ressource en vérifiant qui en est l'auteur.
+
+{/* **Nouvelle notion.** Le **propriétaire** d'une ressource : dans bien des systèmes, seul l'auteur d'un contenu peut le modifier. On introduit ici cette vérification, sans mettre en place de véritable authentification. */}
+
+Crée une API qui gère une liste de commentaires en mémoire. Chaque commentaire a un `id`, un `author` (le nom de l'auteur) et un `text`. Expose :
+
+- `GET /comments` : renvoie tous les commentaires.
+- `POST /comments` : crée un commentaire à partir de `{ author, text }`, répond **201**.
+- `PUT /comments/:id` : remplace le `text` du commentaire, mais **seulement** si celui qui demande la modification est l'auteur.
+
+Pour identifier le demandeur de façon simple, attends un champ `author` dans le corps de la requête `PUT`. Compare-le à l'auteur enregistré :
+
+- Commentaire introuvable : **404**.
+- `author` du corps différent de l'auteur enregistré : **403** (interdit).
+- Sinon : remplace le texte et réponds **200**.
+
+{/* **Étapes suggérées.**
+
+1. Réutilise la structure de l'exercice 1 (`let comments = []`, un compteur d'identifiants).
+2. Dans la route `PUT`, retrouve d'abord le commentaire. S'il est absent, réponds 404 tout de suite.
+3. Compare ensuite `req.body.author` à `comment.author`. En cas de différence, réponds 403.
+4. Sinon, mets à jour `comment.text` et réponds 200. */}
+
+<Aside type="tip" title="Pourquoi PUT et pas PATCH ?">
+`PUT` remplace la ressource (ici son texte). `PATCH` sert à une modification partielle. Comme le commentaire n'a qu'un champ modifiable, `PUT` suffit et reste plus simple à raisonner.
+</Aside>
+
+<Checkpoint title="Critères de validation">
+- `POST /comments` avec `{ "author": "Ada", "text": "Bonne idée." }` répond **201**.
+- `PUT /comments/1` avec `{ "author": "Ada", "text": "Excellente idée." }` répond **200** et le texte est modifié au prochain `GET`.
+- `PUT /comments/1` avec `{ "author": "Bob", "text": "..." }` répond **403** et le texte reste inchangé.
+- `PUT /comments/999` répond **404**.
+</Checkpoint>
+
+{/* <Aside type="caution" title="Piège fréquent">
+Vérifier le propriétaire avant de vérifier l'existence. Si le commentaire n'existe pas, la comparaison d'auteur porte sur `undefined` et le comportement devient imprévisible. L'ordre est : d'abord 404, ensuite 403.
+</Aside> */}
+
+---
+
+## À retenir
+
+1. Une route associe un verbe HTTP et un chemin ; la réponse porte toujours un code de statut, qui a autant de sens que le corps.
+2. Le CRUD couvre les quatre opérations de base et se traduit par les verbes `GET`, `POST`, `PUT`, `DELETE`.
+3. La validation se fait avant l'enregistrement et signale les refus par un code 4xx, idéalement en listant toutes les erreurs d'un coup.
+4. Distinguer 404 (la ressource n'existe pas) de 403 (elle existe, mais l'action n'est pas permise) aide le client à réagir correctement.
+5. Garder la logique (validation, recherche) dans des fonctions séparées des routes rend le code plus lisible et plus facile à faire évoluer, par exemple lorsqu'on passera à plusieurs services.
