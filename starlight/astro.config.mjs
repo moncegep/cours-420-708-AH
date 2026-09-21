@@ -33,7 +33,8 @@ export default defineConfig({
 				{
 					label: 'Exercices',
 					items: [
-						{ label: "Prise en main d'Express", slug: "exercices/01-express" }
+						{ label: "Prise en main d'Express", slug: "exercices/01-express" },
+						{ label: "Conception d'API", slug: "exercices/02-probleme" }
 					],
 				},
 				// {

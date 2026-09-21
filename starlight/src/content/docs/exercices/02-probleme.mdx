@@ -1,0 +1,148 @@
+---
+title: "Problème de conception : le dossier étudiant à l'Université de Pikas"
+description: "Un problème de modélisation de données et de conception d'API, réparti sur plusieurs séances : suivre les changements au dossier étudiant pour répondre à la fois aux besoins du registrariat et à ceux de la direction de programme."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Checkpoint from '../../../components/Checkpoint.astro';
+
+<Aside type="note" title="Format de l'exercice">
+Il s'agit d'un exercice de conception : tu produis un modèle de données et une conception d'**API** (interface de programmation applicative : l'ensemble des points d'accès par lesquels un programme échange des données avec un autre). Aucun code exécutable n'est demandé ici.
+</Aside>
+
+## Contexte
+
+L'**Université de Pikas** (établissement fictif) accueille plusieurs milliers d'étudiants. 
+Elle peine à suivre le parcours de chacun et à comprendre les problèmes récurrents dans ses programmes d'études.
+
+Le dossier d'un étudiant évolue constamment. Chaque modification passe par un **formulaire** : il est d'abord soumis, 
+puis validé (ou refusé) par le registrariat. Parmi les changements possibles :
+
+- inscription à un cours ;
+- abandon d'un cours ;
+- absence à une évaluation ;
+- changement de choix de cours ;
+- changement de programme ;
+- saisie d'une note.
+
+Deux services utilisent ces mêmes données, mais pour des raisons différentes.
+
+- Le **registrariat** travaille au quotidien : traiter les formulaires en attente, consulter l'état actuel d'un dossier.
+- La **direction de programme** cherche à comprendre : quels cours posent problème, où les étudiants abandonnent, quelles difficultés reviennent d'une cohorte à l'autre.
+
+Ton défi : concevoir un modèle de données et une API qui servent **ces deux besoins** à partir des mêmes informations.
+{/* 
+## Ce que tu produis
+
+Au fil des séances, tu construis trois livrables.
+
+1. Un **schéma conceptuel** : les entités, leurs attributs principaux, et les relations entre elles. Une *entité* désigne ici un type d'objet du domaine (par exemple un étudiant, un cours). Le schéma peut être un diagramme ou une description structurée, indépendant de toute technologie.
+2. Une **liste de points d'accès** de l'API. Un *point d'accès* (souvent appelé *endpoint*) est l'association d'un verbe HTTP et d'un chemin, par exemple `GET /students/:id`. Regroupe-les en deux familles : opérationnelle et analytique.
+3. Pour les points d'accès principaux, un **exemple de sortie JSON** : le corps de réponse attendu, avec des données plausibles. */}
+
+## Déroulement
+
+{/* Le travail avance par étapes. L'enseignant fixe le rythme d'une séance à l'autre. */}
+
+### Étape 1 — Modéliser librement
+
+À partir du contexte, propose un premier schéma conceptuel. 
+Quelles entités vois-tu ? Quelles données porte chacune ? Comment sont-elles reliées ? 
+Ne cherche pas encore la perfection : pose une première version, celle qui te semble naturelle.
+
+### Étape 2 — Confronter ton modèle aux questions
+
+On met ensuite ton modèle à l'épreuve avec une liste de questions concrètes (section suivante). 
+Pour chacune, demande-toi : *mon modèle permet-il d'y répondre, et comment ?* Note celles qui passent et celles qui bloquent.
+
+### Étape 3 — Réviser
+
+Ajuste ton schéma à la lumière des questions qui bloquaient. 
+L'objectif n'est pas d'ajouter des entités au hasard, mais de comprendre *pourquoi* une question résistait, puis de corriger la cause.
+
+### Étape 4 — Concevoir l'API
+
+Une fois le modèle stabilisé, conçois les points d'accès pour les deux familles, avec leurs sorties JSON. 
+Chaque point d'accès devrait se rattacher à au moins une question de l'étape 2.
+
+## Les questions qui mettent le modèle à l'épreuve
+
+Ton modèle et ton API devraient permettre de répondre à des questions des deux familles. La liste n'est pas exhaustive : ajoute les tiennes.
+
+**Côté opérationnel**
+
+1. Quels formulaires sont actuellement en attente de validation ?
+2. Quel est l'état actuel du dossier de l'étudiant X : programme, cours suivis, notes déjà saisies ?
+3. Qui a validé un formulaire donné, et à quelle date ?
+4. Un formulaire refusé : peut-on retrouver le motif du refus ?
+
+**Côté analytique**
+
+5. Combien d'étudiants ont abandonné le cours MAT101 après un échec à l'intra ?
+6. Quel cours est le plus souvent abandonné en première session ?
+7. Combien d'étudiants ont changé de programme cette année, et depuis quels programmes ?
+8. Pour une cohorte donnée, comment évolue le nombre d'inscrits d'une session à l'autre ?
+
+{/* <Checkpoint title="Auto-vérification (fin d'étape 2)">
+Pour chacune des huit questions, tu devrais pouvoir dire « oui, mon modèle répond, voici comment » 
+ou « non, il manque ceci ». Si plusieurs questions analytiques bloquent alors que les opérationnelles 
+passent, c'est un signal utile sur ce que ton modèle conserve et ce qu'il laisse échapper.
+</Checkpoint> */}
+
+## Pistes ouvertes
+
+Ces pistes sont des invitations à réfléchir, pas des réponses à recopier. Ton modèle t'appartient ; tu dois pouvoir le justifier.
+
+- **Formulaire = demande de changement.** Un formulaire n'est pas qu'un déclencheur jetable. Il a un cycle de vie (soumis, validé, refusé), un auteur, un validateur, une date. Que gagnes-tu à le conserver comme une donnée à part entière ?
+- **État courant ou historique ?** Un modèle qui ne garde que l'*état courant* du dossier (les cours actuels, le statut actuel) répond bien aux questions du moment présent. Dans bien des cas, il répond moins bien aux questions d'évolution dans le temps. Que perds-tu si tu n'enregistres que l'état final de chaque dossier ?
+- **État dérivé vs changements conservés.** On peut voir l'état d'un dossier comme quelque chose qu'on *calcule* à partir de la suite des changements validés, un peu comme un solde de compte se déduit de la liste des transactions. Est-ce une piste utile ici ? Quels en seraient les coûts ?
+- **Penser l'analytique tôt.** Les questions analytiques reposent souvent sur des **agrégations** (regrouper et compter des données : par cours, par session, par programme). Vérifie que ton modèle rend ces regroupements possibles avant de le figer.
+
+<Aside type="tip" title="Ce qui vient après">
+Le choix d'une base de données (par exemple relationnelle ou orientée documents) et l'écriture du code Express viendront plus tard. Ici, on décide *quoi* représenter et *quelles* données l'API expose, avant de décider *comment* le stocker.
+</Aside>
+
+## Format attendu des livrables
+
+### Schéma conceptuel
+
+Pour chaque entité : son nom, ses attributs principaux, et ses relations avec les autres entités. Exemple de présentation (les entités sont à toi de définir) :
+
+```
+Student
+  - id
+  - nom
+  - courriel
+  - programme actuel
+  relations : ...
+```
+
+### Table des points d'accès
+
+Regroupe les points d'accès par famille. Pour chacun : verbe, chemin, brève description, données d'entrée, données de sortie.
+
+| Famille | Verbe | Chemin | Description | Entrée | Sortie |
+|---|---|---|---|---|---|
+| Opérationnel | GET | `/forms?status=pending` | Formulaires en attente | (aucune) | liste de formulaires |
+| Analytique | GET | `/programs/:id/dropouts` | Abandons par cours | paramètres de filtre | agrégat par cours |
+
+Ces deux lignes sont des exemples de format, pas un corrigé. Complète avec tes propres points d'accès.
+
+### Exemples de sortie JSON
+
+Pour les points d'accès principaux, donne un corps de réponse plausible. Exemple de forme :
+
+```json
+{
+  "studentId": 4021,
+  "programme": "Informatique",
+  "coursActuels": [
+    { "code": "MAT101", "statut": "inscrit" },
+    { "code": "INF200", "statut": "abandonné" }
+  ]
+}
+```
+
+{/* ## À rendre
+
+À la dernière séance consacrée au problème : le schéma conceptuel révisé, la table des points d'accès regroupés par famille, et les exemples de sortie JSON des points d'accès principaux, accompagnés d'une phrase par choix important reliant ce choix à une des questions ci-dessus. */}
