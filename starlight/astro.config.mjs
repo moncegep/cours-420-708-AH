@@ -23,9 +23,11 @@ export default defineConfig({
 				{
 					label: 'Notes de cours',
 					items: [
-						{ label: "Intro à Node.js et npm", slug: "guides/01-nodejs" },
-						{ label: "JavaScript moderne", slug: "guides/02-javascript" },
-						{ label: "Prise en main d'Express", slug: "guides/03-express" },
+						{ label: "Intro à Node.js et npm", slug: "cours/01-nodejs" },
+						{ label: "JavaScript moderne", slug: "cours/02-javascript" },
+						{ label: "Conception d'une API", slug: "cours/03-conception-api" },
+						{ label: "Prise en main d'Express", slug: "cours/03-express-1" },
+						{ label: "Middleware d'Express", slug: "cours/04-express-2" },
 					],
 				},
 				{

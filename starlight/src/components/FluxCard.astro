@@ -1,0 +1,426 @@
+---
+/**
+ * FluxCard.astro
+ *
+ * Affiche un flux d'usage en trois niveaux progressifs :
+ *   1. Scénario  — acteur, intention, interaction (humain)
+ *   2. REST      — méthode, ressource, route (pont conceptuel)
+ *   3. Intégré   — séquence complète avec réponses (implémentation)
+ *
+ * Usage :
+ *   <FluxCard
+ *     numero={1}
+ *     titre="Trouver des boîtes à proximité"
+ *     acteurs={[{ nom: "Citoyen", type: "user" }]}
+ *     intention="Voir ce qui est disponible autour, avec assez d'information pour décider."
+ *   >
+ *     <Fragment slot="scenario">...</Fragment>
+ *     <Fragment slot="rest">...</Fragment>
+ *     <Fragment slot="integre">...</Fragment>
+ *   </FluxCard>
+ */
+
+interface Acteur {
+  nom: string;
+  type?: "user" | "system" | "external";
+}
+
+interface Props {
+  numero: number;
+  titre: string;
+  acteurs: Acteur[];
+  intention: string;
+}
+
+const { numero, titre, acteurs, intention } = Astro.props;
+const uid = `flux-${numero}-${Math.random().toString(36).slice(2, 7)}`;
+---
+
+<article class="flux" data-flux>
+  <!-- En-tête -->
+  <header class="flux__head">
+    <span class="flux__num">{String(numero).padStart(2, "0")}</span>
+    <h3 class="flux__titre">{titre}</h3>
+  </header>
+
+  <!-- Acteurs + intention -->
+  <div class="flux__meta">
+    <div class="flux__acteurs">
+      {acteurs.map((a) => (
+        <span class={`flux__acteur flux__acteur--${a.type ?? "user"}`}>{a.nom}</span>
+      ))}
+    </div>
+    <p class="flux__intention">{intention}</p>
+  </div>
+
+  <!-- Stepper : indique la profondeur -->
+  <div class="flux__stepper" role="tablist" aria-label="Niveaux de détail">
+    <button class="flux__step flux__step--active" data-level="1" aria-selected="true" id={`${uid}-t1`}>
+      <span class="flux__step-dot"></span>
+      <span class="flux__step-label">Scénario</span>
+    </button>
+    <span class="flux__step-line" data-line="1"></span>
+    <button class="flux__step" data-level="2" aria-selected="false" id={`${uid}-t2`}>
+      <span class="flux__step-dot"></span>
+      <span class="flux__step-label">REST</span>
+    </button>
+    <span class="flux__step-line" data-line="2"></span>
+    <button class="flux__step" data-level="3" aria-selected="false" id={`${uid}-t3`}>
+      <span class="flux__step-dot"></span>
+      <span class="flux__step-label">Intégré</span>
+    </button>
+  </div>
+
+  <!-- Panneaux -->
+  <div class="flux__panels">
+    <section class="flux__panel flux__panel--active" data-panel="1" aria-labelledby={`${uid}-t1`}>
+      <slot name="scenario" />
+    </section>
+    <section class="flux__panel" data-panel="2" aria-labelledby={`${uid}-t2`} hidden>
+      <div class="flux__panel-tag flux__panel-tag--rest">Correspondance REST</div>
+      <slot name="rest" />
+    </section>
+    <section class="flux__panel" data-panel="3" aria-labelledby={`${uid}-t3`} hidden>
+      <div class="flux__panel-tag flux__panel-tag--integre">Flux intégré</div>
+      <slot name="integre" />
+    </section>
+  </div>
+
+  <!-- Navigation -->
+  <footer class="flux__nav">
+    <button class="flux__nav-btn flux__nav-btn--prev" data-prev hidden>← Précédent</button>
+    <button class="flux__nav-btn flux__nav-btn--next" data-next>Voir la correspondance REST →</button>
+  </footer>
+</article>
+
+<script>
+  // Comportement : navigation entre les 3 niveaux, par instance
+  function initFlux(root: HTMLElement) {
+    const steps = root.querySelectorAll<HTMLButtonElement>("[data-level]");
+    const lines = root.querySelectorAll<HTMLElement>("[data-line]");
+    const panels = root.querySelectorAll<HTMLElement>("[data-panel]");
+    const prevBtn = root.querySelector<HTMLButtonElement>("[data-prev]");
+    const nextBtn = root.querySelector<HTMLButtonElement>("[data-next]");
+
+    const labels = [
+      "Voir la correspondance REST →",
+      "Voir le flux intégré →",
+      "",
+    ];
+
+    let current = 1;
+    const max = 3;
+
+    function show(level: number) {
+      current = level;
+
+      steps.forEach((s) => {
+        const l = Number(s.dataset.level);
+        s.classList.toggle("flux__step--active", l <= level);
+        s.classList.toggle("flux__step--current", l === level);
+        s.setAttribute("aria-selected", String(l === level));
+      });
+
+      lines.forEach((ln) => {
+        const l = Number(ln.dataset.line);
+        ln.classList.toggle("flux__step-line--active", l < level);
+      });
+
+      panels.forEach((p) => {
+        const l = Number(p.dataset.panel);
+        const active = l === level;
+        p.classList.toggle("flux__panel--active", active);
+        p.hidden = !active;
+      });
+
+      if (prevBtn) prevBtn.hidden = level === 1;
+      if (nextBtn) {
+        nextBtn.hidden = level === max;
+        nextBtn.textContent = labels[level - 1] || "";
+      }
+    }
+
+    steps.forEach((s) =>
+      s.addEventListener("click", () => show(Number(s.dataset.level)))
+    );
+    nextBtn?.addEventListener("click", () => show(Math.min(current + 1, max)));
+    prevBtn?.addEventListener("click", () => show(Math.max(current - 1, 1)));
+  }
+
+  document.querySelectorAll<HTMLElement>("[data-flux]").forEach(initFlux);
+</script>
+
+<style>
+  .flux {
+    --flux-user: #2563eb;
+    --flux-system: #0d9488;
+    --flux-external: #d97706;
+    --flux-rest: #2563eb;
+    --flux-integre: #16a34a;
+    --flux-surface: var(--sl-color-bg, #ffffff);
+    --flux-raised: var(--sl-color-gray-7, #f8f7f4);
+    --flux-border: var(--sl-color-gray-5, #e2e0db);
+    --flux-text: var(--sl-color-text, #1a1a2e);
+    --flux-muted: var(--sl-color-gray-3, #6b6b80);
+
+    margin: 2rem 0;
+    border: 1px solid var(--flux-border);
+    border-radius: 16px;
+    background: var(--flux-surface);
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.03);
+  }
+
+  /* En-tête */
+  .flux__head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    padding: 20px 24px 0;
+  }
+  .flux__num {
+    font-family: var(--sl-font-mono, "JetBrains Mono", monospace);
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: var(--flux-border);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .flux__titre {
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin: 0;
+    line-height: 1.3;
+    color: var(--flux-text);
+  }
+
+  /* Acteurs + intention */
+  .flux__meta {
+    padding: 12px 24px 18px;
+  }
+  .flux__acteurs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .flux__acteur {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 3px 11px;
+    border-radius: 100px;
+    letter-spacing: 0.01em;
+  }
+  .flux__acteur--user {
+    background: color-mix(in srgb, var(--flux-user) 12%, transparent);
+    color: var(--flux-user);
+  }
+  .flux__acteur--system {
+    background: color-mix(in srgb, var(--flux-system) 12%, transparent);
+    color: var(--flux-system);
+  }
+  .flux__acteur--external {
+    background: color-mix(in srgb, var(--flux-external) 14%, transparent);
+    color: var(--flux-external);
+  }
+  .flux__intention {
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    color: var(--flux-muted);
+  }
+
+  /* Stepper */
+  .flux__stepper {
+    display: flex;
+    align-items: center;
+    padding: 0 24px 18px;
+    gap: 0;
+  }
+  .flux__step {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 2px;
+    font: inherit;
+    color: var(--flux-muted);
+    transition: color 0.2s;
+  }
+  .flux__step-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    border: 2px solid var(--flux-border);
+    background: var(--flux-surface);
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    flex-shrink: 0;
+  }
+  .flux__step-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+  .flux__step--active {
+    color: var(--flux-text);
+  }
+  .flux__step--active .flux__step-dot {
+    border-color: var(--flux-rest);
+    background: var(--flux-rest);
+  }
+  .flux__step--current .flux__step-dot {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--flux-rest) 18%, transparent);
+  }
+  .flux__step-line {
+    flex: 1;
+    height: 2px;
+    background: var(--flux-border);
+    margin: 0 8px;
+    transition: background 0.3s;
+  }
+  .flux__step-line--active {
+    background: var(--flux-rest);
+  }
+
+  /* Panneaux */
+  .flux__panels {
+    border-top: 1px solid var(--flux-border);
+    background: var(--flux-raised);
+  }
+  .flux__panel {
+    padding: 20px 24px;
+    animation: flux-fade 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .flux__panel[hidden] { display: none; }
+  @keyframes flux-fade {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .flux__panel-tag {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 3px 10px;
+    border-radius: 6px;
+    margin-bottom: 14px;
+  }
+  .flux__panel-tag--rest {
+    background: color-mix(in srgb, var(--flux-rest) 14%, transparent);
+    color: var(--flux-rest);
+  }
+  .flux__panel-tag--integre {
+    background: color-mix(in srgb, var(--flux-integre) 14%, transparent);
+    color: var(--flux-integre);
+  }
+
+  /* Navigation */
+  .flux__nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 24px;
+    border-top: 1px solid var(--flux-border);
+    background: var(--flux-surface);
+  }
+  .flux__nav-btn {
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: all 0.18s;
+    border: 1px solid transparent;
+  }
+  .flux__nav-btn--next {
+    background: var(--flux-text);
+    color: var(--flux-surface);
+    margin-left: auto;
+  }
+  .flux__nav-btn--next:hover {
+    transform: translateX(2px);
+    opacity: 0.9;
+  }
+  .flux__nav-btn--prev {
+    background: none;
+    color: var(--flux-muted);
+    border-color: var(--flux-border);
+  }
+  .flux__nav-btn--prev:hover {
+    color: var(--flux-text);
+    border-color: var(--flux-muted);
+  }
+  .flux__nav-btn[hidden] { display: none; }
+
+  /* Contenu des slots — styles utilitaires exposés */
+  .flux__panel :global(.fmap) {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    gap: 6px 12px;
+    margin: 4px 0 12px;
+    font-size: 0.9rem;
+  }
+  .flux__panel :global(.fmap dt) {
+    color: var(--flux-muted);
+    font-size: 0.82rem;
+    text-align: right;
+    padding-top: 1px;
+  }
+  .flux__panel :global(.fmap dd) {
+    margin: 0;
+  }
+  .flux__panel :global(.fsteps) {
+    counter-reset: fs;
+    list-style: none;
+    padding: 0;
+    margin: 12px 0 0;
+    border-left: 2px solid color-mix(in srgb, var(--flux-integre) 30%, transparent);
+  }
+  .flux__panel :global(.fsteps > li) {
+    counter-increment: fs;
+    position: relative;
+    padding: 6px 0 14px 22px;
+    font-size: 0.9rem;
+    line-height: 1.55;
+  }
+  .flux__panel :global(.fsteps > li::before) {
+    content: counter(fs);
+    position: absolute;
+    left: -10px;
+    top: 6px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--flux-integre);
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--sl-font-mono, monospace);
+  }
+  .flux__panel :global(.fnote) {
+    color: var(--flux-muted);
+    font-size: 0.82rem;
+    margin-top: 3px;
+  }
+
+  /* Responsive */
+  @media (max-width: 600px) {
+    .flux__head { padding: 16px 18px 0; }
+    .flux__meta { padding: 10px 18px 14px; }
+    .flux__stepper { padding: 0 18px 14px; }
+    .flux__step-label { display: none; }
+    .flux__step-line { margin: 0 4px; }
+    .flux__panel { padding: 16px 18px; }
+    .flux__nav { padding: 12px 18px; }
+    .flux__nav-btn { font-size: 0.8rem; padding: 7px 12px; }
+    .flux__panel :global(.fmap) { grid-template-columns: 1fr; gap: 2px; }
+    .flux__panel :global(.fmap dt) { text-align: left; margin-top: 8px; }
+  }
+</style>

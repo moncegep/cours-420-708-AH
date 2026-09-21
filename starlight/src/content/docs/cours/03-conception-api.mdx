@@ -1,0 +1,463 @@
+---
+title: "Concevoir une API"
+description: "À travers l'exemple de Lino, un réseau de boîtes à livres : comment passer des besoins humains aux endpoints, au modèle de données, et au code."
+---
+
+import FluxCard from "../../../components/FluxCard.astro";
+import MarginNote from "../../../components/MarginNote.astro";
+import Highlight from "../../../components/Highlight.astro";
+import ExchangeSimulator from "../../../components/react/ExchangeSimulator.jsx"
+
+<h2>Application Lino (Boite à livres)</h2>
+
+Il y a une tentation, quand on apprend à construire une API, de commencer par la base de données. On dessine ses tables, on les expose une par une, et on appelle ça du REST. Le résultat fonctionne — mais il ne *parle* pas. Chaque endpoint est une fenêtre sur une table, et c'est au client de recoller les morceaux pour comprendre quoi que ce soit.
+
+Ce guide prend le chemin inverse. On part d'un système réel — un réseau de boîtes à livres — et on remonte des besoins des gens jusqu'au code. 
+Le principe à retenir : <Highlight>une bonne API ne décrit pas une base de données, elle offre un abstraction permettant de répondre efficacement à des questions.</Highlight>
+
+## Le système
+
+Lino est un réseau de boîtes à livres en libre-service disséminées dans une ville. Vous en avez probablement croisé : une petite armoire vitrée au coin d'une rue, remplie de romans que des inconnus déposent et prennent librement. Pas de bibliothécaire, pas de carte de membre, pas de date de retour. La confiance est implicite.
+
+Avant d'écrire une seule ligne de code, il faut comprendre ce que les gens font *déjà*, sans application.
+
+Quelqu'un marche dans son quartier, tombe sur une boîte, feuillette, prend un livre, en laisse un autre. Quelqu'un d'autre cherche un titre précis et fait le tour des boîtes à pied, sans jamais savoir si le livre qu'il veut se trouve à trois rues de là. Un troisième dépose un roman qu'il a adoré en espérant secrètement que quelqu'un le trouvera.
+
+L'application ne doit pas *remplacer* ces gestes. Elle doit les *amplifier* — rendre visible ce qui était invisible, sans alourdir ce qui marchait déjà. C'est une contrainte de conception avant d'être une contrainte technique.
+
+## On commence par les questions
+
+Quand on conçoit à partir des tables, on se demande « quelles entités ai-je à stocker? ». Quand on conçoit à partir des usages, on se demande « quelles questions les gens se posent? ». Les deux produisent des systèmes très différents.
+
+Voici les questions que pose un utilisateur de Lino :
+
+- Où sont les boîtes près de moi, et est-ce qu'elles valent le détour?
+- Qu'est-ce qu'il y a dans cette boîte devant laquelle je suis?
+- Est-ce que quelqu'un, quelque part, a le livre que je cherche?
+- Je viens de déposer un livre — qui pourrait le vouloir?
+- D'où vient ce livre que je tiens? Combien de mains l'ont eu avant moi?
+
+Chacune de ces questions deviendra un *flux* — une séquence d'échanges entre le client et le serveur. Et c'est là le cœur de l'affaire : <Highlight couleur="ambre">un protocole n'est pas une liste d'endpoints, c'est une chorégraphie.</Highlight> Un endpoint isolé répond à une question; une séquence d'endpoints raconte une interaction.
+
+<MarginNote type="rappel" titre="Concevoir par les usages">
+Partir des tables demande « quelles entités stocker? ». Partir des usages demande « quelles questions les gens posent? ». Les deux produisent des systèmes radicalement différents.
+</MarginNote>
+
+## Trois flux, du besoin au code
+
+Chaque flux ci-dessous se lit à trois niveaux. Commencez par le *scénario* — ce qu'un humain veut accomplir. Passez ensuite à la *correspondance REST* — comment ce besoin se traduit en ressources et en méthodes. Terminez par le *flux intégré* — la séquence complète, avec le code et les réponses.
+
+<FluxCard
+  numero={1}
+  titre="Trouver des boîtes à proximité"
+  acteurs={[{ nom: "Clara — citoyenne", type: "user" }]}
+  intention="Voir les boîtes autour de soi, avec assez d'information pour décider de s'y rendre ou non."
+>
+  <Fragment slot="scenario">
+    Clara ouvre l'application en marchant dans le Plateau. Elle veut savoir s'il y a
+    des boîtes à livres autour d'elle — et si elles contiennent quelque chose d'intéressant.
+    Elle ne veut pas se déplacer pour rien.
+
+    L'app utilise sa position GPS et affiche les boîtes proches avec leur distance,
+    leur activité récente, et une estimation du contenu.
+  </Fragment>
+
+  <Fragment slot="rest">
+    <dl class="fmap">
+      <dt>Ressource</dt><dd><code>/boites</code> — les boîtes à livres</dd>
+      <dt>Action</dt><dd><code>GET</code> — lire, pas modifier</dd>
+      <dt>Filtrage</dt><dd><code>?lat=45.523&lon=-73.587&rayon=2km</code></dd>
+      <dt>Route Express</dt><dd><code>router.get("/boites", handler)</code></dd>
+    </dl>
+
+    La réponse inclut la **distance calculée** et l'**activité récente** — le client
+    n'a pas à faire ces calculs lui-même.
+  </Fragment>
+
+  <Fragment slot="integre">
+    <ol class="fsteps">
+      <li>
+        <code>GET /boites?lat=45.523&lon=-73.587&rayon=2km</code>
+        <div class="fnote">La position GPS est envoyée à l'ouverture de l'app.</div>
+      </li>
+      <li>Le serveur interroge MongoDB avec un index <code>2dsphere</code>, calcule les distances et trie du plus proche au plus loin.</li>
+      <li>
+        Réponse <code>200</code> :
+        ```json
+        [{
+          "id": "boite-14",
+          "nom": "Boîte du parc Laurier",
+          "distance": "450m",
+          "derniere_activite": "il y a 2 heures",
+          "livres_estimes": 12,
+          "_links": { "detail": "/boites/boite-14" }
+        }]
+        ```
+      </li>
+      <li>Clara voit la boîte à 450m, active — elle s'y rend. Clic → <code>GET /boites/boite-14</code></li>
+    </ol>
+  </Fragment>
+</FluxCard>
+
+Remarquez ce que la réponse fait : elle ne renvoie pas des coordonnées brutes à charge pour Clara de calculer une distance. Elle renvoie `"450m"`, `"il y a 2 heures"`, `"12 livres estimés"` — de l'information *déjà interprétée*. <Highlight>La réponse fait le travail à la place du client.</Highlight> C'est ce qui sépare une API qui parle d'une API qui déverse.
+
+<FluxCard
+  numero={2}
+  titre="Déposer un livre et prévenir ceux qui le cherchent"
+  acteurs={[
+    { nom: "Marc — donneur", type: "user" },
+    { nom: "Système", type: "system" },
+    { nom: "Sophie — chercheuse", type: "user" }
+  ]}
+  intention="Marc signale un dépôt. Sophie veut être prévenue quand le livre qu'elle cherche apparaît."
+>
+  <Fragment slot="scenario">
+    Marc est devant la boîte du parc Laurier. Il dépose un exemplaire de *Dune*.
+    Quelque part dans le quartier, Sophie cherche ce livre depuis deux semaines.
+
+    Marc scanne le code QR et confirme le dépôt. Le système vérifie si quelqu'un
+    cherche ce titre. Sophie, la prochaine fois qu'elle consulte sa recherche,
+    voit que *Dune* a été trouvé à 450m de chez elle.
+  </Fragment>
+
+  <Fragment slot="rest">
+    <dl class="fmap">
+      <dt>Dépôt</dt><dd><code>POST /boites/:id/livres</code></dd>
+      <dt>Alerte</dt><dd><code>POST /recherches</code></dd>
+      <dt>Consultation</dt><dd><code>GET /recherches/:id</code></dd>
+      <dt>Effet de bord</dt><dd>Le <code>POST</code> de Marc met à jour la recherche de Sophie — sans qu'elle agisse</dd>
+    </dl>
+  </Fragment>
+
+  <Fragment slot="integre">
+    <p><strong>Sophie crée son alerte (avant) :</strong></p>
+    <ol class="fsteps">
+      <li><code>POST /recherches</code> → <code>201 {"{ id: \"rech-5\", statut: \"en attente\" }"}</code></li>
+    </ol>
+    <p><strong>Marc dépose :</strong></p>
+    <ol class="fsteps">
+      <li><code>POST /boites/boite-14/livres</code> avec <code>{"{ titre, code_qr }"}</code></li>
+      <li>Le serveur insère l'événement, met à jour la boîte, et cherche les recherches actives pour « Dune »</li>
+      <li>Réponse <code>201</code> avec <code>recherches_notifiees: 1</code></li>
+    </ol>
+    <p><strong>Sophie revient (après) :</strong></p>
+    <ol class="fsteps">
+      <li><code>GET /recherches/rech-5</code> — même endpoint, réponse différente</li>
+      <li>
+        Réponse <code>200</code> :
+        ```json
+        {
+          "statut": "trouvé",
+          "resultats": [{ "boite": "boite-14", "distance": "450m" }]
+        }
+        ```
+      </li>
+    </ol>
+  </Fragment>
+</FluxCard>
+
+Ce flux cache quelque chose d'important. Le `POST` de Marc ne se contente pas d'enregistrer un livre — il *modifie l'état d'une autre ressource* : la recherche de Sophie. Un seul appel déclenche une cascade côté serveur. Et la notification de Sophie n'arrive pas par magie : elle doit revenir consulter sa recherche. C'est du *polling*, et c'est exactement là où le modèle requête-réponse montre ses limites. Sophie aimerait être *prévenue*, mais REST ne sait pas pousser — il sait seulement répondre quand on demande. On y reviendra.
+
+<MarginNote type="attention" titre="Limite de REST">
+Le polling — revenir demander « du nouveau? » — est le symptôme d'un besoin de *push*. On verra les Server-Sent Events en semaine 11, quand le serveur devra parler sans qu'on le sollicite.
+</MarginNote>
+
+<FluxCard
+  numero={3}
+  titre="Suivre le parcours d'un livre"
+  acteurs={[{ nom: "Léa — curieuse", type: "user" }]}
+  intention="Voir l'histoire d'un livre : son parcours à travers les boîtes de la ville."
+>
+  <Fragment slot="scenario">
+    Léa a trouvé un livre avec un code QR sur la couverture. Elle le scanne par
+    curiosité : qui l'a lu avant elle? D'où vient-il? Combien de boîtes a-t-il traversées?
+
+    L'app affiche le parcours complet : chaque boîte où il est passé, les dates,
+    la distance totale parcourue.
+  </Fragment>
+
+  <Fragment slot="rest">
+    <dl class="fmap">
+      <dt>Ressource</dt><dd><code>/livres/:code_qr</code></dd>
+      <dt>Action</dt><dd><code>GET</code> — lecture seule</dd>
+      <dt>Données</dt><dd>Agrégation des événements (dépôts + retraits), pas un document stocké tel quel</dd>
+    </dl>
+
+    C'est un endpoint **sémantique** : il ne retourne pas une ligne de base de données,
+    il *raconte une histoire* en agrégeant des événements.
+  </Fragment>
+
+  <Fragment slot="integre">
+    <ol class="fsteps">
+      <li><code>GET /livres/QR-7890</code> — Léa scanne le QR</li>
+      <li>Le serveur agrège : <code>db.evenements.find({"{ code_qr: \"QR-7890\" }"}).sort({"{ date: 1 }"})</code></li>
+      <li>
+        Réponse <code>200</code> :
+        ```json
+        {
+          "titre": "Dune",
+          "parcours": [
+            { "action": "déposé", "boite": "boite-7", "date": "2026-04-01" },
+            { "action": "pris", "boite": "boite-7", "date": "2026-04-18" },
+            { "action": "déposé", "boite": "boite-14", "date": "2026-05-12" }
+          ],
+          "distance_parcourue": "3.2km"
+        }
+        ```
+      </li>
+      <li>Léa voit que le livre a voyagé 3.2km. Elle décide de le lire et de le redéposer ailleurs.</li>
+    </ol>
+  </Fragment>
+</FluxCard>
+
+Cet endpoint est le plus révélateur des trois. Il n'y a aucune table « parcours » dans la base. Le parcours *n'existe pas* comme donnée — il est calculé à la volée à partir d'une suite d'événements bruts (des dépôts et des retraits). L'endpoint prend des faits dispersés et en fait un récit. C'est ce qu'on appelle une **vue dérivée** : <Highlight couleur="violet">la donnée stockée et la donnée servie ne sont pas la même chose.</Highlight>
+
+
+<ExchangeSimulator client:visible />
+
+
+{/* ## Le modèle de données vient en dernier
+
+Une fois les flux clairs, le modèle de données découle presque tout seul. La question n'est plus « quelles tables? » mais « quelles lectures vais-je faire le plus souvent? ».
+
+On pourrait être tenté de stocker les livres *dans* le document de chaque boîte — un tableau `livres` imbriqué. C'est simple, et un seul `findOne` suffit pour lister le contenu d'une boîte. Mais le flux 3 révèle le piège : un livre traverse *plusieurs* boîtes au fil du temps. Si les livres sont enfermés dans les boîtes, reconstituer le parcours d'un seul livre oblige à fouiller *tous* les documents.
+
+La solution : découpler. Les boîtes sont une collection. Les mouvements de livres — dépôts et retraits — sont une autre collection, celle des `evenements`. Chaque événement est autonome : il porte son code QR, sa boîte, sa date, son action.
+
+```javascript
+// Collection : boites
+{ _id: "boite-14", nom: "Boîte du parc Laurier",
+  position: { type: "Point", coordinates: [-73.585, 45.527] },
+  statut: "active" }
+
+// Collection : evenements
+{ code_qr: "QR-7890", titre: "Dune", action: "depose",
+  boite: "boite-14", date: ISODate("2026-05-12") }
+```
+
+Le parcours d'un livre devient une requête triviale : `db.evenements.find({ code_qr }).sort({ date: 1 })`. Et les livres actuellement *présents* dans une boîte? Ce sont les dépôts sans retrait correspondant — un calcul, pas un stockage. Là encore, la donnée servie n'est pas la donnée stockée.
+
+Le principe général : <Highlight couleur="ambre">si une donnée a un cycle de vie indépendant de son parent, elle mérite sa propre collection.</Highlight> Un livre existe indépendamment de la boîte où il se trouve à un instant donné. Le forcer à vivre à l'intérieur d'une boîte, c'est nier ce qu'il est.
+
+<MarginNote type="astuce" titre="Imbriquer ou découpler?">
+Imbriquer gagne pour lire un tout (une boîte et son contenu d'un coup). Découpler gagne quand l'enfant a sa propre vie (un livre qui voyage). Le bon choix dépend de la lecture la plus fréquente.
+</MarginNote> */}
+
+
+## Table récapitulative des endpoints
+
+### Boîtes
+
+| Méthode | Endpoint | Description |
+|---|---|---|
+| `GET` | `/boites?lat=...&lon=...&rayon=...` | Boîtes à proximité avec distance et activité |
+| `GET` | `/boites/:id` | Détail d'une boîte |
+| `POST` | `/boites` | Ajouter une boîte |
+
+### Livres
+
+| Méthode | Endpoint | Description |
+|---|---|---|
+| `GET` | `/boites/:id/livres` | Livres dans une boîte |
+| `POST` | `/boites/:id/livres` | Déposer un livre |
+| `DELETE` | `/boites/:id/livres/:code_qr` | Signaler qu'on prend un livre |
+| `GET` | `/livres/:code_qr` | Parcours complet d'un livre |
+
+### Recherches
+
+| Méthode | Endpoint | Description |
+|---|---|---|
+| `POST` | `/recherches` | Créer une alerte |
+| `GET` | `/recherches/:id` | Vérifier l'état |
+| `DELETE` | `/recherches/:id` | Annuler |
+
+### Signalements
+
+| Méthode | Endpoint | Description |
+|---|---|---|
+| `POST` | `/boites/:id/signalements` | Signaler un problème |
+| `GET` | `/boites/:id/signalements` | Voir les signalements |
+
+### Échanges
+
+| Méthode | Endpoint | Description |
+|---|---|---|
+| `POST` | `/echanges` | Proposer un échange |
+| `GET` | `/echanges?destinataire=...` | Voir ses propositions |
+| `PUT` | `/echanges/:id` | Accepter ou refuser |
+| `GET` | `/echanges/:id` | Consulter l'état |
+
+---
+
+## Modèle de données
+
+Les endpoints et les flux déterminent le modèle — pas l'inverse. La question est : quelles lectures sont les plus fréquentes?
+
+### Collections MongoDB
+
+```javascript
+// Collection : boites
+{
+  _id: "boite-14",
+  nom: "Boîte du parc Laurier",
+  position: { type: "Point", coordinates: [-73.585, 45.527] },
+  description: "Grande boîte vitrée, côté est du parc",
+  statut: "active",
+  derniere_activite: ISODate("2026-05-12T14:20:00Z"),
+  livres_estimes: 12
+}
+
+// Collection : evenements
+{
+  _id: ObjectId("..."),
+  type: "depot",          // "depot" | "retrait"
+  code_qr: "QR-7890",
+  titre: "Dune",
+  auteur: "Frank Herbert",
+  boite_id: "boite-14",
+  date: ISODate("2026-05-12T14:20:00Z")
+}
+
+// Collection : recherches
+{
+  _id: "rech-5",
+  titre: "Dune",
+  statut: "trouvé",       // "en attente" | "trouvé" | "annulée"
+  correspondances: [
+    { boite_id: "boite-14", code_qr: "QR-7890", date: ISODate("...") }
+  ]
+}
+
+// Collection : signalements
+{
+  _id: ObjectId("..."),
+  boite_id: "boite-14",
+  type: "vandalisée",
+  note: "vitre cassée",
+  date: ISODate("2026-05-10T08:30:00Z")
+}
+
+// Collection : echanges
+{
+  _id: "ech-3",
+  de: "nadia",
+  destinataire: "lea",
+  offre: { code_qr: "QR-1111", titre: "L'Étranger" },
+  demande: { code_qr: "QR-7890", titre: "Dune" },
+  message: "Intéressée par Dune — j'ai L'Étranger",
+  statut: "accepté",
+  rendez_vous: "Café Olimpico, 16h",
+  date: ISODate("2026-05-13T10:00:00Z")
+}
+```
+
+### Pourquoi des événements séparés?
+
+Les livres dans une boîte pourraient être stockés *dans* le document de la boîte (un tableau `livres`). Mais chaque livre a un cycle de vie indépendant — il traverse plusieurs boîtes. Si les livres sont imbriqués, le parcours d'un livre (`GET /livres/QR-7890`) demande de chercher dans *tous* les documents boîtes.
+
+En séparant les événements, le parcours d'un livre est une simple requête :
+
+```javascript
+db.evenements.find({ code_qr: "QR-7890" }).sort({ date: 1 })
+```
+
+Les livres *actuellement* dans une boîte se déduisent des événements : les dépôts sans retrait correspondant. C'est un calcul, pas un stockage — et c'est un choix de conception (stocker l'état courant vs le recalculer à partir de l'historique).
+
+### Index
+
+```javascript
+db.boites.createIndex({ position: "2dsphere" });        // recherche géospatiale
+db.evenements.createIndex({ code_qr: 1, date: 1 });     // parcours d'un livre
+db.evenements.createIndex({ boite_id: 1, type: 1 });     // livres dans une boîte
+db.recherches.createIndex({ titre: 1, statut: 1 });      // correspondances lors d'un dépôt
+```
+
+---
+
+
+## Le code n'est que la dernière étape
+
+Voici l'endpoint de dépôt (créé avec Express) qui déclenche la cascade du **flux 2** :
+
+```javascript
+router.post("/boites/:id/livres", async (req, res) => {
+  const { titre, code_qr } = req.body;
+
+  // 1. Valider — avant de toucher la base
+  if (!titre || !code_qr) {
+    return res.status(400).json({
+      error: "MISSING_FIELDS",
+      message: "Les champs 'titre' et 'code_qr' sont requis.",
+      received: Object.keys(req.body),
+    });
+  }
+
+  // 2. Vérifier que la boîte existe
+  const boite = await db.collection("boites").findOne({ _id: req.params.id });
+  if (!boite) {
+    return res.status(404).json({
+      error: "BOITE_NOT_FOUND",
+      message: `La boîte '${req.params.id}' n'existe pas.`,
+    });
+  }
+
+  // 3. Enregistrer l'événement
+  await db.collection("evenements").insertOne({
+    code_qr, titre, action: "depose",
+    boite_id: req.params.id, date: new Date(),
+  });
+
+  // 4. Effet de bord : prévenir ceux qui cherchent ce titre
+  const notif = await db.collection("recherches").updateMany(
+    { titre: new RegExp(titre, "i"), statut: "en attente" },
+    { $set: { statut: "trouve" } }
+  );
+
+  // 5. Répondre — avec des liens vers la suite
+  res.status(201).json({
+    message: "Livre déposé.",
+    recherches_notifiees: notif.modifiedCount,
+    _links: { livre: `/livres/${code_qr}`, boite: `/boites/${req.params.id}` },
+  });
+});
+```
+
+Tout ce qu'on a vu dans le cours est là, condensé : la **validation** avant l'action, les **codes de statut** qui portent un verdict (400, 404, 201), les **erreurs expressives** qui disent au client quoi corriger, l'**effet de bord** sur une autre ressource, et le champ **`_links`** qui guide le client vers la prochaine étape sans qu'il ait à deviner les URLs.
+
+{/* Ce dernier point — les liens dans la réponse — touche à une idée que la plupart des « API REST » ignorent complètement, et qui était pourtant au cœur de l'intention originale de REST. Une réponse qui contient les actions possibles à partir d'elle-même rend le client *indépendant* de la structure des URLs. C'est ce qu'on appelle l'hypermédia, et c'est le sujet d'un des liens ci-dessous.
+
+<MarginNote type="lien" titre="Hypermédia">
+L'idée que la réponse porte elle-même les prochaines actions possibles s'appelle HATEOAS. C'est la partie de REST la plus souvent oubliée — voir le texte de Roy Fielding plus bas.
+</MarginNote> */}
+
+{/* ## Ce qu'on n'a pas résolu
+
+Concevoir, c'est aussi savoir ce qu'on laisse de côté — et le dire.
+
+La **notification de Sophie** se fait par polling : elle doit revenir demander. Un vrai système la *préviendrait*. Mais le push (Server-Sent Events, WebSocket) est un autre modèle de communication, qui sort du cadre requête-réponse. C'est une limite assumée, pas un oubli.
+
+La **modération** repose sur la confiance communautaire. Que faire si quelqu'un signale faussement qu'une boîte a disparu? On pourrait exiger un seuil de signalements concordants avant d'agir — mais sur-sécuriser un système fondé sur la confiance, c'est en trahir l'esprit. C'est une décision de conception, pas un bug à corriger.
+
+L'**authentification** est minimale. Lino marche parce que les gens se font confiance. Ajouter trop de contrôle découragerait la contribution. Le bon niveau de friction n'est pas zéro, mais il n'est pas maximal non plus.
+
+Aucune de ces questions n'a de réponse universelle. C'est précisément pour ça qu'elles méritent d'être documentées plutôt que tranchées en silence dans le code. */}
+
+---
+
+## Pour aller plus loin
+
+Quelques lectures qui prolongent la réflexion sur la conception d'API — moins sur la syntaxe, plus sur les intentions derrière les choix.
+
+- [**RESTful API Design: nouns are good, verbs are bad**](https://cloud.google.com/blog/products/api-management/restful-api-design-nouns-are-good-verbs-are-bad) (Google Cloud) — le billet classique sur la différence entre nommer des ressources et nommer des actions, et pourquoi le premier produit des API prévisibles.
+
+- [**REST APIs must be hypertext-driven**](https://roy.gbiv.com/untangled/2008/rest-apis-must-be-hypertext-driven) (Roy Fielding) — l'inventeur de REST explique, avec une certaine exaspération, ce que la plupart des « API REST » ratent : l'hypermédia comme moteur de l'état. Court, tranchant, fondateur.
+
+- [**Roy Fielding's Misappropriated REST Dissertation**](https://twobithistory.org/2020/06/28/rest.html) (Two-Bit History) — une histoire fascinante de comment le mot « REST » a dérivé de sa définition d'origine. Utile pour comprendre pourquoi tant de débats sur « est-ce vraiment du REST » tournent en rond.
+
+- [**REST, Explained for Beginners**](https://htmx.org/essays/rest-explained/) (htmx) — une relecture du chapitre 5 de la thèse de Fielding pour des développeurs non-académiques. Défend l'idée que l'hypermédia (HTML, justement) est plus proche de l'esprit REST que les API JSON modernes.
+
+- [**Web API Design Best Practices**](https://learn.microsoft.com/en-us/azure/architecture/best-practices/api-design) (Microsoft Azure) — un guide complet et pragmatique sur la modélisation des ressources, le filtrage, la pagination et le versionnage. Une bonne référence à garder sous la main.
+
+- [**Most RESTful APIs aren't really RESTful**](https://florian-kraemer.net/software-architecture/2025/07/07/Most-RESTful-APIs-are-not-really-RESTful.html) (Florian Krämer) — une discussion accessible de ce que le découplage client-serveur via l'hypermédia apporte réellement, au-delà du débat « verbes ou noms ».
+
+L'idée centrale à retenir est qu'une API n'est pas simplement une copie de votre base de données rendue accessible en ligne. Une API est une **interface** : elle définit une façon claire et contrôlée d’interagir avec votre système. Son rôle est de permettre à d'autres développeurs, applications ou services de comprendre ce qu'ils peuvent demander à votre système et comment l'utiliser, sans avoir besoin d'entrer dans les détails de son code ou de sa structure interne.
