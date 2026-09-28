@@ -1,0 +1,270 @@
+---
+layout: ../../layouts/DocLayout.astro
+title: "Identité et authentification"
+description: "Distinguer l'identité (ce qu'une entité est), l'identification (ce qu'elle revendique) et l'authentification (la preuve de cette revendication). Pourquoi la distance rend la reconnaissance incertaine, la confiance déléguée et les autorités de certification, ce qu'est l'authenticité, les facteurs d'authentification, le secret partagé, l'authentification déléguée, et la sécurisation des échanges. Avec un cycle de connexion animé."
+---
+
+import MarginNote from "../../components/MarginNote.astro";
+import Highlight from "../../components/Highlight.astro";
+import Checkpoint from "../../components/Checkpoint.astro";
+import FluxSequence from "../../components/react/FluxSequence.jsx";
+
+Sur Internet, une question revient sans cesse : à qui ou à quoi avons-nous affaire ? 
+
+## 1. Identité, identification, authentification
+
+Trois actes distincts, dans l'ordre où ils se présentent à un serveur :
+
+1. L'**identité** est l'ensemble des informations qui distinguent une entité des autres. Pour un système, « c'est moi » ne suffit pas : il faut une représentation manipulable (un courriel, un matricule, un compte, une clé).
+2. L'**identification** est l'acte par lequel une entité **revendique** une identité. Saisir `alice@example.com` ne prouve rien : cela annonce seulement l'identité prétendue.
+3. L'**authentification** est la **vérification** de cette revendication : prouver que l'entité est bien celle qu'elle prétend être.
+
+<MarginNote type="definition" titre="Niveaux d'identité">
+Une même personne porte plusieurs identités selon le contexte : **sociale** (un nom), **administrative** (un matricule, un numéro de client attribué par une institution) et **numérique** (un compte, un courriel, un identifiant attribué par un système). L'identité n'est pas un nom, c'est une représentation située.
+</MarginNote>
+
+<Highlight>L'identification dit « voici qui je prétends être » ; l'authentification demande « peux-tu le prouver ? »</Highlight>
+
+<Checkpoint question="Un visiteur saisit le courriel d'un compte existant. Est-il identifié ou authentifié ?">
+Seulement **identifié** : il a revendiqué une identité. Tant que le système n'a pas vérifié une preuve (un mot de passe, par exemple), il n'est pas authentifié.
+</Checkpoint>
+
+## 2. Le problème de la distance
+
+En personne, la reconnaissance est **organique** : on cumule des indices (visage, voix, comportement habituel, contexte attendu) sans preuve unique. 
+Sur Internet, cette reconnaissance riche est remplacée par des signaux techniques (identifiant, mot de passe, adresse, appareil, certificat, jeton), et la distance ouvre des risques :
+
+- **interception** : un tiers écoute et lit ce qui passe ;
+- **usurpation** : un tiers envoie des requêtes en se faisant passer pour un autre ;
+- **rejeu** : un tiers capte une requête valide et la renvoie telle quelle ;
+- **intermédiaire** : un tiers s'interpose, relaie et peut modifier les messages.
+
+## 3. Une question de confiance
+
+Le problème de la distance laisse un vide : si je ne peux pas vérifier moi-même une revendication, sur quoi m'appuyer ? 
+La réponse habituelle est de **déléguer la confiance** à un tiers que je tiens déjà pour fiable, et qui se porte garant. 
+La confiance devient alors **transitive** : je fais confiance à l'autorité, l'autorité atteste une revendication, 
+donc j'étends une confiance conditionnelle à ce qu'elle atteste, sans l'avoir vérifié moi-même.
+
+**La création d'autorité.** Une **autorité** est un tiers dont le rôle est de vérifier une fois et d'attester auprès de tous. 
+Sa valeur tient à deux conditions : la rigueur de sa vérification avant d'attester, et le fait que toutes les parties s'accordent à lui faire confiance. 
+Cette seconde condition est essentielle : une attestation ne vaut que si chacun reconnaît la même autorité comme **point d'ancrage** commun.
+
+### Les autorités de certification du web
+
+Le cas le plus concret est celui de HTTPS. 
+Une **autorité de certification** lie une clé publique à une identité, en pratique un nom de domaine, au moyen d'un **certificat** signé. 
+Cette confiance s'organise en chaîne.
+
+<figure style="margin:1.75rem auto;max-width:640px;">
+<svg viewBox="0 0 720 372" role="img" aria-label="Chaîne de confiance : une autorité racine signe une autorité intermédiaire, qui signe le certificat du serveur. Le navigateur valide la chaîne de la feuille jusqu'à la racine." style="width:100%;height:auto;font-family:inherit;">
+<rect x="230" y="20" width="260" height="66" rx="10" fill="none" stroke="#0d9488" stroke-width="2"/>
+<text x="360" y="48" text-anchor="middle" fill="currentColor" font-size="16" font-weight="600">Autorité racine</text>
+<text x="360" y="68" text-anchor="middle" fill="currentColor" font-size="12" opacity="0.65">certificat auto-signé</text>
+<text x="502" y="47" fill="currentColor" font-size="11" opacity="0.6">préinstallée dans le</text>
+<text x="502" y="63" fill="currentColor" font-size="11" opacity="0.6">magasin de confiance</text>
+<line x1="360" y1="90" x2="360" y2="144" stroke="currentColor" stroke-width="1.5" opacity="0.5"/>
+<polygon points="352,142 368,142 360,150" fill="currentColor" opacity="0.5"/>
+<text x="372" y="120" fill="currentColor" font-size="13" opacity="0.55">signe</text>
+<rect x="230" y="150" width="260" height="66" rx="10" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="360" y="188" text-anchor="middle" fill="currentColor" font-size="16" font-weight="600">Autorité intermédiaire</text>
+<line x1="360" y1="220" x2="360" y2="274" stroke="currentColor" stroke-width="1.5" opacity="0.5"/>
+<polygon points="352,272 368,272 360,280" fill="currentColor" opacity="0.5"/>
+<text x="372" y="250" fill="currentColor" font-size="13" opacity="0.55">signe</text>
+<rect x="230" y="280" width="260" height="66" rx="10" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="360" y="307" text-anchor="middle" fill="currentColor" font-size="16" font-weight="600">Certificat du serveur</text>
+<text x="360" y="327" text-anchor="middle" fill="currentColor" font-size="12" opacity="0.65">la feuille, présentée à la connexion</text>
+<line x1="118" y1="334" x2="118" y2="46" stroke="#0d9488" stroke-width="2"/>
+<polygon points="110,56 126,56 118,46" fill="#0d9488"/>
+<text x="102" y="190" transform="rotate(-90 102 190)" text-anchor="middle" fill="#0d9488" font-size="13" font-weight="600">le navigateur valide la chaîne</text>
+</svg>
+<figcaption style="text-align:center;font-size:0.85rem;opacity:0.7;margin-top:0.5rem;">Signature de haut en bas ; vérification de bas en haut, jusqu'à une racine de confiance.</figcaption>
+</figure>
+
+- La **racine** possède un certificat auto-signé, dont la clé publique est **préinstallée** dans le magasin de confiance du navigateur ou du système d'exploitation. C'est l'ancre : on lui fait confiance par défaut, parce que l'éditeur du navigateur l'a vérifiée et admise.
+- La racine signe des autorités **intermédiaires**, qui signent à leur tour les certificats des sites. On garde ainsi la clé racine hors ligne et mieux protégée.
+- Le certificat **feuille** est celui du serveur, présenté au navigateur à la connexion.
+
+À la connexion, le navigateur **valide la chaîne** : il vérifie que chaque signature remonte jusqu'à une racine de confiance, contrôle les dates de validité, la correspondance du domaine et l'état de révocation. Cette vérification du domaine est reprise plus loin, à la section sur la sécurisation des échanges. Un point à ne pas confondre : <Highlight couleur="ambre">l'autorité atteste le lien entre une clé et un domaine, pas l'honnêteté du site.</Highlight> Un site d'hameçonnage peut détenir un certificat parfaitement valide. HTTPS prouve « tu parles bien au domaine annoncé, de façon chiffrée », pas « ce domaine est digne de confiance ».
+
+<Checkpoint question="Un site d'hameçonnage affiche un cadenas HTTPS valide. Que prouve son certificat, et que ne prouve-t-il pas ?">
+Il prouve le **lien entre la clé et le domaine** et permet le chiffrement du transport : on parle bien au domaine annoncé, sans interception. Il ne prouve **pas** que le site est honnête ou légitime. Le cadenas porte sur le canal, pas sur les intentions.
+</Checkpoint>
+
+### Le même schéma hors du web.
+
+Le motif est récurrent : vérifier une fois, attester à plusieurs, pour éviter que chacun revérifie tout. Une **institution éducative** atteste une compétence par un diplôme, qu'un employeur accepte sans refaire passer les examens. Un **ordre professionnel** (l'Ordre des ingénieurs du Québec, le Collège des médecins, le Barreau) atteste le droit d'exercer et sert de garde-fou pour le public. Un **passeport** est l'attestation d'identité d'un État, reconnue par les autres.  
+Variante décentralisée : les **systèmes de réputation** (avis, notes, évaluations), où la confiance émerge de l'agrégation de nombreux témoignages plutôt que d'une institution unique.
+
+<MarginNote type="attention" titre="Le point faible : corruption et abus de pouvoir">
+Déléguer la confiance la **concentre**. L'autorité devient un point de défaillance unique : si elle est compromise, corrompue ou contrainte, toute la chaîne qu'elle soutient est empoisonnée. En 2011, l'autorité néerlandaise **DigiNotar** a été piratée et a émis des centaines de faux certificats, notamment pour des services de Google, qui ont servi à intercepter des communications. <Highlight>Le système ne vaut jamais plus que sa pire autorité.</Highlight>
+</MarginNote>
+
+<MarginNote type="plusloin" titre="Des garde-fous">
+Le web a ajouté des contre-mesures. La **transparence des certificats** (Certificate Transparency) inscrit chaque certificat émis dans des registres publics et vérifiables, ce qui rend une émission frauduleuse détectable. Les **certificats à courte durée de vie** et la **révocation** réduisent la fenêtre d'abus. Et des modèles **décentralisés** (la toile de confiance, où des pairs se certifient mutuellement) répartissent la confiance au lieu de la concentrer.
+</MarginNote>
+
+## 4. L'authenticité d'une information
+
+Une information est **authentique** quand on peut répondre à deux questions : d'où vient-elle (**origine**) et a-t-elle été altérée (**intégrité**) ? Cela diffère de la **confidentialité** (empêcher de lire) : un message peut être authentique sans être secret, et secret sans être authentique.
+
+Le lien avec l'authentification est direct : <Highlight couleur="ambre">authentifier une entité, c'est établir l'authenticité de sa revendication d'identité.</Highlight> La question « ce jeton a-t-il vraiment été émis par le serveur ? » ou « ce courriel vient-il vraiment de la banque ? » est une question d'authenticité.
+
+## 5. Mécanismes et facteurs d'authentification
+
+Prouver une identité repose sur un ou plusieurs **facteurs** :
+
+| Facteur | Question | Exemples |
+|---|---|---|
+| Ce que l'on sait | Que connaît-on ? | mot de passe, NIP |
+| Ce que l'on possède | Que possède-t-on ? | téléphone, clé physique, application d'authentification |
+| Ce que l'on est | Qui est-on physiquement ? | empreinte, visage, voix |
+| Ce que l'on fait | Comment agit-on ? | rythme de frappe, signature, comportement |
+| Où l'on est | D'où vient-on ? | adresse IP, réseau connu, localisation |
+
+L'authentification **simple** repose sur un seul facteur (le mot de passe). L'authentification **multifacteur** en combine au moins deux de natures différentes (mot de passe et code temporaire), pour que la compromission d'un seul élément ne suffise plus.
+
+<Highlight>La stratégie de fond ne change jamais : on ne fait jamais confiance au client. La vérification se fait côté serveur.</Highlight>
+
+## 6. Le secret partagé
+
+Le cas le plus répandu est le **mot de passe** : un secret connu du client et du serveur. Le serveur ne le conserve pas en clair ; il garde un **condensat salé** (le résultat d'une fonction de hachage lente appliquée au mot de passe combiné à une valeur aléatoire propre au compte). À la connexion, il recalcule le condensat et le compare. Ainsi, une fuite de la base de données ne livre pas les mots de passe.
+
+```js
+import bcrypt from "bcrypt";
+
+// à l'inscription : on ne garde que le condensat
+const condensat = await bcrypt.hash(motDePasse, 12);
+
+// à la connexion : on vérifie sans jamais stocker le secret en clair
+const valide = await bcrypt.compare(motDePasseRecu, condensat);
+if (!valide) return res.status(401).json({ erreur: "identifiants invalides" });
+```
+
+<MarginNote type="attention" titre="Limites du secret partagé">
+Un secret partagé reste vulnérable à l'hameçonnage, à la réutilisation entre sites et à l'interception sans HTTPS. D'où l'intérêt de combiner HTTPS, hachage robuste et un second facteur.
+</MarginNote>
+
+<MarginNote type="plusloin" titre="Prouver sans révéler">
+Un secret partagé doit être présenté pour être vérifié : il voyage, donc il peut être intercepté ou hameçonné. 
+Les **preuves à divulgation nulle** (zero-knowledge proofs) renversent l'idée : prouver qu'on connaît un secret, ou qu'une affirmation est vraie, sans rien révéler d'autre que sa véracité. 
+L'intuition : répondre correctement à une longue suite de défis imprévisibles, ce qui serait impossible sans connaître le secret, mais sans jamais le montrer. 
+On y recourt pour s'authentifier sans transmettre le mot de passe, ou pour des preuves respectueuses de la vie privée (prouver « j'ai plus de 18 ans » sans révéler sa date de naissance). 
+Puissant, mais coûteux : ce n'est pas le mécanisme des connexions web ordinaires, qui envoient encore le mot de passe sur TLS. 
+Introduction en vidéo : [preuve à divulgation nulle](https://www.youtube.com/watch?v=fOGdb1CTu5c).
+</MarginNote>
+
+## 7. Authentification et autorisation
+
+L'authentification répond à « qui es-tu ? ». L'**autorisation** répond à « qu'as-tu le droit de faire ? ». 
+Les deux sont distinctes : être authentifié ne donne pas tous les droits.
+
+### Authentifié n'est pas autorisé
+
+Une entité authentifiée n'accède qu'aux ressources permises par ses droits. La décision dépend de plusieurs éléments : le rôle de l'entité, le propriétaire de la ressource, l'état de la ressource, la date, le contexte de la requête.
+
+> Un étudiant peut modifier son propre rapport tant que la date limite n'est pas passée.
+
+Cette règle combine l'identité (l'étudiant), la propriété (son rapport), l'état (avant la date limite) et l'action (modifier). La distinction se traduit dans deux codes de statut :
+
+- **`401 Unauthorized`** : aucune preuve d'identité valable, l'entité n'est pas **authentifiée**.
+- **`403 Forbidden`** : l'entité est authentifiée, mais **non autorisée** pour cette ressource.
+
+<Checkpoint question="Un compte ordinaire, correctement connecté, demande une ressource réservée aux administrateurs. Le serveur répond 401 ou 403 ?">
+**`403`**. La session prouve l'identité (donc pas de `401`), mais les droits ne couvrent pas la ressource : c'est un refus d'autorisation.
+</Checkpoint>
+
+### Modèles d'autorisation
+
+Il existe plusieurs manières d'organiser les droits.
+
+**Par rôle (RBAC, Role-Based Access Control).** Les permissions sont attachées à des rôles (`étudiant`, `correcteur`, `enseignant`, `admin`), et une entité reçoit un ou plusieurs rôles. Ce modèle est simple à comprendre, mais il devient rigide lorsque les droits dépendent fortement du contexte.
+
+**Par attributs (ABAC, Attribute-Based Access Control).** La décision dépend d'attributs de l'utilisateur, de la ressource, de l'action et du contexte. Ainsi « un correcteur peut évaluer une copie seulement si elle lui est assignée » : le rôle ne suffit pas, il faut l'attribut `assignée à`.
+
+**Par capacité.** Posséder un jeton, un lien ou une clé transférable donne le droit d'agir : lien de réinitialisation, URL signée, invitation à un document. Ce modèle est commode, mais il exige de gérer la durée de vie, la portée, la révocation et le risque de partage accidentel.
+
+<MarginNote type="astuce" titre="RBAC en pratique">
+Le middleware `exigerRole` de la note [Les middlewares dans Express](/notes/middlewares-express) est une mise en oeuvre directe du RBAC : il lit le rôle posé sur la requête et accorde ou refuse l'accès.
+</MarginNote>
+
+<MarginNote type="attention" titre="Le moindre privilège">
+<Highlight>Une entité ne devrait recevoir que les permissions nécessaires à ce qu'elle doit faire.</Highlight> 
+Ce principe du **moindre privilège** limite les dégâts en cas de compromission : un compte volé ou un jeton fuité n'ouvre que le strict périmètre accordé, pas tout le système.
+</MarginNote>
+
+
+### L'autorisation déléguée : le flux OAuth
+
+Souvent, une application doit accéder à une ressource détenue ailleurs, par exemple lire l'agenda Google d'un utilisateur. Sans mécanisme dédié, il faudrait confier son mot de passe Google à l'application, qui aurait alors accès à tout le compte. <Highlight couleur="ambre">L'autorisation déléguée accorde un accès limité sans jamais transmettre le mot de passe à l'application.</Highlight>
+
+Le flux ci-dessous (de type code d'autorisation) fait intervenir quatre acteurs : l'utilisateur, l'application, le fournisseur (Google) et l'API de ressource.
+
+<FluxSequence
+  titre="Flux OAuth : accès délégué à l'agenda, sans partage du mot de passe"
+  acteurs={[
+    { key: "user", label: "Utilisateur", icone: "laptop" },
+    { key: "app", label: "Application", icone: "server" },
+    { key: "idp", label: "Fournisseur", icone: "lock" },
+    { key: "api", label: "API ressource", icone: "database" },
+  ]}
+  etapes={[
+    { de: 0, vers: 1, texte: "« connecter mon agenda »" },
+    { de: 1, vers: 2, texte: "redirige, portée demandée", note: "scope: read:agenda", mono: true },
+    { de: 2, vers: 0, texte: "authentifie et demande le consentement" },
+    { de: 0, vers: 2, texte: "accorde le consentement" },
+    { de: 2, vers: 1, texte: "code d'autorisation", mono: true },
+    { de: 1, vers: 2, texte: "échange le code (+ secret client)", mono: true },
+    { de: 2, vers: 1, texte: "jeton d'accès", statut: 200, note: "portée limitée, durée limitée" },
+    { de: 1, vers: 3, texte: "GET /agenda  Authorization: Bearer …", mono: true },
+    { de: 3, vers: 1, texte: "données de l'agenda", statut: 200 },
+  ]}
+  client:visible
+/>
+
+<MarginNote type="definition" titre="Authentification déléguée ou autorisation déléguée ?">
+Déléguer l'**authentification** (« se connecter avec Google », le SSO) répond à « qui est l'utilisateur ? ». Déléguer l'**autorisation** (OAuth) répond à « cette application peut-elle accéder à cette ressource ? ». OAuth porte l'autorisation ; une couche d'identité (OpenID Connect) s'y ajoute pour l'authentification.
+</MarginNote>
+
+## 8. La continuité de l'identité
+
+HTTP étant **sans état**, chaque requête arrive seule : le serveur ne se souvient pas de la précédente. Après l'authentification, il faut donc une représentation persistée que le client présente à chaque requête.
+
+- **Session côté serveur** : le serveur garde l'état et ne remet qu'un identifiant de session opaque, dans un cookie `HttpOnly`.
+- **Jeton autoportant** : l'état est encodé et signé dans un jeton que le client renvoie, souvent dans l'en-tête `Authorization`. Le serveur vérifie la signature sans garder d'état.
+
+## 9. Synthèse : le cycle de connexion
+
+L'identification, l'authentification, la création de session, l'autorisation et la traçabilité s'enchaînent. La séquence ci-dessous déroule une connexion puis une première requête authentifiée.
+
+<FluxSequence
+  titre="De l'identification à la première requête authentifiée"
+  acteurs={[
+    { key: "client", label: "Client", icone: "laptop" },
+    { key: "serveur", label: "Serveur", icone: "server" },
+    { key: "bd", label: "Base de données", icone: "database" },
+  ]}
+  etapes={[
+    { de: 0, vers: 1, texte: "identification + secret", note: "courriel + mot de passe, sur HTTPS", mono: true },
+    { de: 1, vers: 2, texte: "lit l'utilisateur par courriel" },
+    { de: 2, vers: 1, texte: "condensat + rôles" },
+    { de: 1, vers: 0, texte: "session créée", statut: 200, note: "après vérification du condensat" },
+    { de: 0, vers: 1, texte: "requête authentifiée (cookie)", mono: true },
+    { de: 1, vers: 0, texte: "ressource servie", statut: 200, note: "autorise puis journalise" },
+  ]}
+  client:visible
+/>
+
+## 10. À retenir
+
+| Notion | Question principale |
+|---|---|
+| Identité | Qui ou quoi est cette entité ? |
+| Identification | Quelle identité est revendiquée ? |
+| Authenticité | L'information est-elle réellement ce qu'elle prétend être ? |
+| Authentification | La revendication d'identité est-elle vérifiable ? |
+| Autorisation | Que peut faire cette entité ? |
+| RBAC | Quels droits son rôle accorde-t-il ? |
+| ABAC | Les attributs (utilisateur, ressource, contexte) permettent-ils l'action ? |
+| Capacité | L'entité détient-elle un jeton ou un lien donnant ce droit ? |
+| Délégation (OAuth) | Cette application peut-elle accéder à cette ressource, sans le mot de passe ? |

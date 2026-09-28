@@ -27,7 +27,8 @@ export default defineConfig({
 						{ label: "JavaScript moderne", slug: "cours/02-javascript" },
 						{ label: "Conception d'une API", slug: "cours/03-conception-api" },
 						{ label: "Prise en main d'Express", slug: "cours/03-express-1" },
-						// { label: "Middleware d'Express", slug: "cours/04-express-2" },
+						{ label: "Middleware d'Express", slug: "cours/04-express-2" },
+						{ label: "Structurer et tester une API Express", slug: "cours/05-express-3" },
 					],
 				},
 				{

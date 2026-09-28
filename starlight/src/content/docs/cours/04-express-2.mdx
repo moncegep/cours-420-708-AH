@@ -1,7 +1,6 @@
 ---
 title: "Les middlewares dans Express"
-draft: true
-description: "Le middleware comme instanciation du patron pipe-et-filtre : une chaîne de filtres à responsabilité unique que la requête traverse. Le même patron dans les microservices, son implémentation Express (req, res, next), son enchaînement, et la spécification d'un middleware d'authentification et d'autorisation adossé à MongoDB. Avec pipeline animé et diagramme de séquence interactif."
+description: "Comprendre les middlewares comme une chaîne d'étapes interposées dans le traitement d'une requête Express : req, res et next, ordre d'exécution, interruption de la chaîne, gestion des erreurs, authentification, autorisation, chargement de ressources, validation et mesure du temps de réponse."
 ---
 
 import MarginNote from "../../../components/MarginNote.astro";
@@ -10,133 +9,300 @@ import Checkpoint from "../../../components/Checkpoint.astro";
 import MiddlewarePipeline from "../../../components/react/MiddlewarePipeline.jsx";
 
 <MarginNote type="prerequis">
-Cette fiche suppose les bases d'Express (voir [Prise en main d'Express](/notes/express-prise-en-main)) et reprend, en section 5, la distinction de [Identité, authentification, autorisation](/notes/identite-authentification-autorisation).
+Cette fiche suppose les bases d'Express (voir [Prise en main d'Express](/cours/03-express-1)).
 </MarginNote>
 
-Certaines responsabilités ne relèvent pas du domaine d'une application mais reviennent à chaque requête : journaliser, lire le corps JSON, vérifier une identité, contrôler des droits. Les placer dans chaque gestionnaire de route les disperse et les duplique. Le **middleware** est le mécanisme qui les isole dans des étapes interposées, traversées par la requête avant qu'elle n'atteigne sa destination.
+Certaines responsabilités reviennent dans de nombreuses requêtes sans appartenir directement au domaine de l'application :
 
-## 1. Une instanciation du patron pipe-et-filtre
+- journaliser les requêtes;
+- lire un corps JSON;
+- vérifier l'identité de l'utilisateur;
+- contrôler ses droits;
+- valider les données reçues;
+- charger une ressource demandée.
 
-<MarginNote type="definition" titre="Patron pipe-et-filtre">
-Un patron d'architecture où un traitement est décomposé en **filtres** (étapes autonomes) reliés par des **tuyaux** (pipes) qui transportent la donnée d'un filtre au suivant. Chaque filtre lit son entrée, la transforme ou l'inspecte, et transmet le résultat.
-</MarginNote>
+On pourrait effectuer chacune de ces opérations directement dans les gestionnaires de route. Mais la même logique serait alors répétée à plusieurs endroits.
 
-On peut énoncer le mécanisme sous forme de propositions :
+Express permet plutôt de placer ces traitements dans des **middlewares**, c'est-à-dire des étapes intermédiaires exécutées pendant le traitement d'une requête.
 
-1. Le middleware est une application du patron d'architecture **pipe-et-filtre**.
-2. Un filtre a une **responsabilité unique**.
-3. Un filtre est **faiblement couplé** : il ignore le filtre qui précède comme celui qui suit.
-4. Le tuyau **transporte** la donnée d'un filtre au suivant et **fixe leur ordre**.
-5. La **composition** se fait par l'ordre des filtres, sans modifier leur code.
-6. Le pipeline de traitement d'Express est une **instanciation** de ce patron, où la donnée transportée est le couple `(requête, réponse)`.
+<Highlight>Un middleware intercepte une requête, effectue une responsabilité précise, puis décide si le traitement doit continuer.</Highlight>
 
-<Highlight>Un filtre fait une seule chose et ignore les autres.</Highlight> C'est cette propriété (2 et 3) qui rend la chaîne composable : on insère, retire ou réordonne une étape sans toucher aux suivantes, et le même filtre se réutilise sur plusieurs routes.
+## 1. Le middleware dans Express : 
 
-L'animation ci-dessous donne le motif : la requête entre, traverse chaque filtre dans l'ordre, atteint le gestionnaire, et la réponse ressort.
-
-<MiddlewarePipeline
-  vue="pipeline"
-  initial={["journalisation", "json", "authentification", "autorisation"]}
-  titre="Le pipeline HTTP : la requête traverse les filtres jusqu'au gestionnaire"
-  client:visible
-/>
-
-## 2. Le même patron dans les microservices
-
-Le patron monte d'échelle. Dans une architecture en **microservices**, chaque service doit rester centré sur son domaine ; les responsabilités transversales sont donc, là encore, externalisées dans des étapes interposées, mais au niveau du réseau.
-
-1. La **passerelle d'API** (API gateway) est un point d'entrée unique placé devant les services, qui applique l'authentification, la limitation de débit et le routage avant de transmettre. C'est un pipe-et-filtre à l'échelle du réseau.
-2. Le **side-car** et le **maillage de services** (service mesh) interposent un proxy à côté de chaque service pour le chiffrement, les reprises et l'observabilité, sans modifier le code du service.
-
-<Highlight couleur="ambre">Qu'il s'agisse d'une fonction dans Express ou d'un proxy devant un service, le middleware est le même patron : une étape interposée, à responsabilité unique, qui maintient la logique métier pure.</Highlight>
-
-## 3. Le middleware dans Express : `(req, res, next)`
-
-Un middleware Express est une **fonction de trois paramètres** invoquée pour chaque requête qui correspond à son point de montage :
+Un middleware Express est une fonction qui reçoit généralement trois paramètres `(req, res, next)` : 
 
 ```js
 function journalisation(req, res, next) {
   console.log(`${req.method} ${req.url}`);
-  next(); // passe au filtre suivant
+  next();
 }
-
-app.use(journalisation); // monté pour toutes les routes
 ```
 
-Il accède à la requête (`req`) et à la réponse (`res`), et reçoit `next`, la fonction qui passe la main. À chaque invocation, le contrat impose **exactement une issue** parmi trois :
+On peut ensuite le monter dans l'application :
 
-1. appeler `next()` pour transmettre au filtre suivant ;
-2. **répondre** (`res.json(...)`, `res.status(...).send(...)`) pour terminer la chaîne ;
-3. appeler `next(err)` pour signaler une erreur (section 4).
+```js
+app.use(journalisation);
+```
 
-On monte un middleware globalement (`app.use(mw)`), sur un préfixe (`app.use("/admin", mw)`), ou sur une route (`app.get("/x", mw, gestionnaire)`). Le `express.json()` de la prise en main n'est qu'un middleware intégré.
+Les trois paramètres ont des rôles distincts :
 
-Le diagramme de séquence ci-dessous anime un appel : la requête arrive au serveur, chaque middleware s'exécute dans l'ordre, puis la réponse repart.
+- `req` représente la **requête**;
+- `res` représente la **réponse** qui sera envoyée au client;
+- `next` permet de transférer le traitement à l'étape suivante.
+
+La requête peut ainsi traverser plusieurs middlewares avant d'atteindre le gestionnaire de route.
 
 <MiddlewarePipeline
-  vue="sequence"
-  interactif={true}
-  initial={["journalisation", "authentification", "autorisation"]}
-  titre="Appel des middlewares : la requête traverse la chaîne avant la réponse"
+  vue="pipeline"
+  initial={["journalisation", "json", "authentification", "autorisation"]}
+  titre="Une requête traverse plusieurs étapes avant d'atteindre le gestionnaire"
   client:visible
 />
 
-<MarginNote type="erreur" titre="Le piège du next oublié">
-Si un middleware n'appelle ni `next()` ni une méthode de réponse, la requête reste **suspendue** : aucune étape suivante ne s'exécute. C'est la violation directe du contrat « exactement une issue ».
-</MarginNote>
+### Les trois issues d'un middleware
 
-## 4. L'enchaînement des middlewares
+À chaque exécution, un middleware doit éventuellement mener à l'une de ces trois issues :
 
-<Highlight>L'ordre de déclaration est l'ordre d'exécution.</Highlight> Express empile les middlewares dans l'ordre de montage ; chaque `next()` avance d'un cran. L'ordre n'est donc pas un détail de mise en oeuvre : c'est la **composition** au sens de la proposition 5.
+1. appeler `next()` pour continuer vers l'étape suivante;
+2. produire une réponse avec `res.send()`, `res.json()`, `res.end()`, etc.;
+3. transmettre une erreur avec `next(err)`.
 
-On monte plusieurs middlewares sur une même route, exécutés de gauche à droite :
+Par exemple :
 
 ```js
-app.get("/boites/:id", journalisation, verifierId, chargerBoite, (req, res) => {
-  res.json(req.boite);
-});
+function verifierCle(req, res, next) {
+  if (!req.headers["x-api-key"]) {
+    return res.status(401).json({
+      erreur: "clé manquante",
+    });
+  }
+
+  next();
+}
 ```
 
-Un middleware qui **répond** ou appelle `next(err)` **coupe** la chaîne : les étapes restantes ne s'exécutent pas. C'est ce qui permet à un filtre d'authentification de bloquer une requête avant la logique métier.
+Si la clé est absente, le middleware produit lui-même la réponse.
 
-Les **erreurs** suivent leur propre voie. Un middleware de gestion d'erreurs se reconnaît à son **arité de quatre** paramètres et se déclare **en dernier** ; un `next(err)` saute par-dessus les middlewares ordinaires pour l'atteindre :
+Sinon, `next()` laisse la requête poursuivre son chemin.
+
+<MarginNote type="erreur" titre="Le piège du next oublié">
+Si un middleware ne répond pas et n'appelle pas `next()`, aucune étape suivante ne sera exécutée. La requête reste alors en attente.
+</MarginNote>
+
+### Où monter un middleware ?
+
+Un middleware peut être appliqué à plusieurs niveaux.
+
+#### Pour toutes les requêtes :
 
 ```js
-// déclaré après toutes les routes
+app.use(journalisation);
+```
+
+#### Pour un groupe de routes :
+
+```js
+app.use("/admin", authentifier);
+```
+
+#### Pour une seule route :
+
+```js
+app.get("/profil", authentifier, afficherProfil);
+```
+
+Les fonctions fournies par Express peuvent elles aussi être des middlewares.
+
+**Par exemple :**
+
+```js
+app.use(express.json());
+```
+
+`express.json()` lit un éventuel corps JSON et rend son contenu disponible dans `req.body`.
+
+## 2. L'ordre forme la chaîne de traitement
+
+<Highlight>Dans Express, l'ordre de déclaration détermine l'ordre d'exécution.</Highlight>
+
+Considérons cette route :
+
+```js
+app.get(
+  "/boites/:id",
+  journalisation,
+  verifierId,
+  chargerBoite,
+  afficherBoite
+);
+```
+
+Pour une requête correspondante, Express essaie les étapes de gauche à droite :
+
+```txt
+journalisation
+      ↓
+verifierId
+      ↓
+chargerBoite
+      ↓
+afficherBoite
+```
+
+Chaque middleware appelle `next()` lorsqu'il souhaite poursuivre.
+
+Un middleware peut cependant décider de **terminer la chaîne** en produisant une réponse.
+
+Par exemple :
+
+```js
+function verifierId(req, res, next) {
+  if (!idValide(req.params.id)) {
+    return res.status(400).json({
+      erreur: "identifiant invalide",
+    });
+  }
+
+  next();
+}
+```
+
+Si l'identifiant est invalide, `chargerBoite` et `afficherBoite` ne seront jamais exécutés.
+
+## 3. Les erreurs suivent une autre voie
+
+Un middleware peut rencontrer une erreur qu'il ne souhaite pas transformer directement en réponse.
+
+Il peut alors appeler :
+
+```js
+next(err);
+```
+
+Express cherche ensuite un **middleware de gestion d'erreurs**.
+
+Celui-ci se distingue par quatre paramètres :
+
+```js
 app.use((err, req, res, next) => {
   console.error(err);
-  res.status(err.status ?? 500).json({ erreur: err.message });
+
+  res.status(err.status ?? 500).json({
+    erreur: err.message,
+  });
 });
 ```
 
-<MarginNote type="attention" titre="Quatre paramètres, sinon rien">
-Express distingue un middleware d'erreur au **nombre de paramètres**. Sans les quatre (`err, req, res, next`), il est traité comme un middleware ordinaire et ne reçoit jamais les erreurs.
+Ce middleware est généralement déclaré après les routes et les autres middlewares.
+
+<MarginNote type="attention" titre="Quatre paramètres">
+Express reconnaît un middleware de gestion d'erreurs grâce à sa signature `(err, req, res, next)`. Il faut donc conserver les quatre paramètres, même si `next` n'est pas utilisé directement.
 </MarginNote>
 
-## 5. Un middleware d'authentification et d'autorisation
+### Les fonctions asynchrones avec Express 5
 
-C'est l'application qui referme la note précédente. **Authentifier**, c'est établir l'identité ; **autoriser**, c'est vérifier les droits. Deux responsabilités distinctes, donc **deux middlewares distincts**, dans cet ordre.
+Avec Express 5, une erreur levée dans un middleware `async` ou une promesse rejetée est automatiquement transmise au traitement des erreurs.
 
-### 5.1 La spécification d'un middleware
+Par exemple :
 
-Au-delà de la signature, un middleware se décrit par un **contrat** : ce qu'il suppose en entrée, ce qu'il garantit en sortie.
+```js
+app.get("/boites/:id", async (req, res) => {
+  const boite = await Boite.findById(req.params.id);
 
-**Forme générale.** `m : (req, res, next)`, à effet de bord. *Invariant de sûreté* : sur tout chemin d'exécution, exactement une issue parmi `next()`, une réponse, ou `next(err)` ; et jamais d'issue après une réponse.
+  res.json(boite);
+});
+```
 
-**`authentifier`.**
-- *Précondition* : `req` porte une preuve d'identité éventuelle (un jeton, un cookie de session).
-- *Postcondition* : si `next()` est appelé, alors `req.utilisateur` est défini. Sinon, la réponse est `401`.
-- *Invariant* : n'accorde aucun droit. L'authentification ne décide pas de l'accès, elle établit seulement l'identité.
+Si `findById()` échoue en levant une erreur, Express peut transmettre cette erreur au middleware de gestion d'erreurs.
 
-**`exigerRole(r)`.**
-- *Précondition* : `req.utilisateur` est défini. Ce middleware **doit** donc être monté après `authentifier`.
-- *Postcondition* : `next()` si l'utilisateur détient le rôle `r`, sinon la réponse est `403`.
+<MarginNote type="plusloin">
+Dans Express 4, les erreurs provenant de nombreuses fonctions `async` devaient généralement être capturées avec `try/catch` puis transmises manuellement avec `next(err)`. Ce motif apparaît donc encore fréquemment dans les exemples plus anciens.
+</MarginNote>
 
-<Highlight couleur="ambre">La précondition de l'autorisation est la postcondition de l'authentification : c'est ce qui impose leur ordre dans la chaîne.</Highlight>
+## 4. Une chaîne d'étapes indépendantes
 
-### 5.2 Observer l'effet de la chaîne
+Le fonctionnement des middlewares peut être compris comme un **pipeline de traitement**.
 
-Choisissez un scénario prêt à l'emploi, ou composez votre propre chaîne en activant les middlewares un à un, puis lancez la requête. Coupez le jeton pour voir le `401` de l'authentification ; passez le rôle à `visiteur` pour voir le `403` de l'autorisation. Le scénario « autorisation avant authn » monte l'autorisation **sans** l'authentification : sa précondition tombe, et la requête échoue.
+Chaque étape :
+
+1. reçoit la requête et la réponse;
+2. accomplit une responsabilité particulière;
+3. décide ensuite de poursuivre, de répondre ou de signaler une erreur.
+
+Cette organisation rappelle le patron architectural **pipe-et-filtre**.
+
+<MarginNote type="definition" titre="Pipe-et-filtre">
+Dans le patron pipe-et-filtre, un traitement est décomposé en plusieurs étapes indépendantes. Chaque filtre accomplit une transformation ou une vérification avant de transmettre le traitement à l'étape suivante.
+</MarginNote>
+
+Express n'implémente pas nécessairement une forme pure de ce patron : les middlewares partagent notamment les mêmes objets `req` et `res` et peuvent interrompre la chaîne.
+
+<Highlight>Une bonne chaîne de middlewares est composée de petites étapes ayant chacune une responsabilité claire.</Highlight>
+
+Cela permet de :
+
+- réutiliser une même étape sur plusieurs routes;
+- insérer ou retirer une vérification;
+- modifier l'ordre des traitements;
+- garder les gestionnaires de route centrés sur leur responsabilité principale.
+
+## 5. Authentification et autorisation
+
+L'authentification et l'autorisation illustrent particulièrement bien cette séparation des responsabilités.
+
+**Authentifier** consiste à établir l'identité de l'utilisateur.
+
+**Autoriser** consiste ensuite à déterminer si cet utilisateur possède les droits nécessaires.
+
+Ce sont deux responsabilités différentes.
+
+On peut donc créer deux middlewares :
+
+```txt
+authentifier
+     ↓
+exigerRole("admin")
+     ↓
+gestionnaire
+```
+
+### 5.1 Décrire ce que garantit un middleware
+
+Pour comprendre l'ordre nécessaire, on peut décrire simplement ce que chaque middleware reçoit et ce qu'il garantit.
+
+#### `authentifier`
+
+Il recherche une preuve d'identité dans la requête.
+
+S'il appelle `next()`, il garantit que :
+
+```js
+req.utilisateur
+```
+
+est défini.
+
+Sinon, il répond `401 Unauthorized`.
+
+#### `exigerRole(role)`
+
+Il suppose que :
+
+```js
+req.utilisateur
+```
+
+a déjà été défini.
+
+Il vérifie ensuite si l'utilisateur possède le rôle demandé.
+
+S'il possède ce rôle, le traitement continue.
+
+Sinon, le middleware répond `403 Forbidden`.
+
+<Highlight couleur="ambre">L'autorisation dépend du résultat de l'authentification. Leur ordre dans la chaîne n'est donc pas interchangeable.</Highlight>
+
+### 5.2 Observer l'effet de l'ordre
 
 <MiddlewarePipeline
   vue="les-deux"
@@ -146,68 +312,424 @@ Choisissez un scénario prêt à l'emploi, ou composez votre propre chaîne en a
   client:visible
 />
 
-<Checkpoint question="On monte exigerRole('admin') avant authentifier. La requête arrive avec un jeton valide d'un compte admin. Que se passe-t-il ?">
-Un refus, alors même que l'utilisateur serait autorisé. À l'exécution de `exigerRole`, `authentifier` n'a pas encore tourné : `req.utilisateur` est `undefined`, sa précondition est violée. L'ordre fait partie de la spécification, pas seulement de la mise en oeuvre.
+<Checkpoint question="On place exigerRole('admin') avant authentifier. La requête contient pourtant un jeton valide appartenant à un administrateur. Quel est le problème ?">
+`exigerRole` s'exécute avant que l'identité ait été établie. `req.utilisateur` n'a donc pas encore été défini. L'utilisateur peut être administrateur, mais le middleware d'autorisation ne dispose pas encore de cette information.
 </Checkpoint>
+{/* 
+### 5.3 Une implémentation avec MongoDB
 
-### 5.3 Implémentation avec MongoDB
-
-La preuve d'identité ne suffit pas : il faut **charger l'utilisateur** et ses rôles depuis la base de données. On modélise l'utilisateur avec Mongoose, en ne stockant que le condensat du mot de passe (voir [Identité, authentification, autorisation](/notes/identite-authentification-autorisation)) :
+Supposons que les utilisateurs et leurs rôles soient stockés dans MongoDB.
 
 ```js
 // modeles/utilisateur.js
 import mongoose from "mongoose";
 
 const schema = new mongoose.Schema({
-  courriel:  { type: String, required: true, unique: true },
-  condensat: { type: String, required: true },        // mot de passe haché
-  roles:     { type: [String], default: ["visiteur"] },
+  courriel: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+
+  roles: {
+    type: [String],
+    default: ["visiteur"],
+  },
 });
 
-export const Utilisateur = mongoose.model("Utilisateur", schema);
+export const Utilisateur =
+  mongoose.model("Utilisateur", schema);
 ```
 
-Le middleware d'authentification décode le jeton, puis lit l'utilisateur dans MongoDB. Comme l'accès à la base de données est **asynchrone**, le middleware est `async` et doit acheminer toute erreur vers le middleware d'erreur avec `next(err)` :
+Le middleware d'authentification doit :
+
+1. trouver le jeton transmis par le client;
+2. **vérifier** le jeton;
+3. retrouver l'utilisateur correspondant;
+4. placer l'utilisateur dans `req`;
+5. poursuivre la chaîne.
 
 ```js
 // intergiciels/authentification.js
 import { Utilisateur } from "../modeles/utilisateur.js";
 
 export async function authentifier(req, res, next) {
-  try {
-    const jeton = req.headers.authorization?.split(" ")[1];
-    const charge = jeton ? decoderJeton(jeton) : null;          // -> { id } ou null
-    const utilisateur = charge ? await Utilisateur.findById(charge.id) : null;
-    if (!utilisateur) return res.status(401).json({ erreur: "non authentifié" });
-    req.utilisateur = utilisateur;                              // satisfait la postcondition
-    next();
-  } catch (err) {
-    next(err);                                                  // route vers le middleware d'erreur
-  }
-}
+  const jeton =
+    req.headers.authorization?.split(" ")[1];
 
+  // Fonction simplifiée :
+  // vérifie notamment la validité du jeton
+  // et retourne son contenu.
+  const charge = jeton
+    ? verifierJeton(jeton)
+    : null;
+
+  const utilisateur = charge
+    ? await Utilisateur.findById(charge.id)
+    : null;
+
+  if (!utilisateur) {
+    return res.status(401).json({
+      erreur: "non authentifié",
+    });
+  }
+
+  req.utilisateur = utilisateur;
+
+  next();
+}
+```
+
+L'autorisation devient ensuite indépendante de la façon dont l'identité a été obtenue :
+
+```js
 export function exigerRole(role) {
   return (req, res, next) => {
     if (!req.utilisateur?.roles.includes(role)) {
-      return res.status(403).json({ erreur: "accès interdit" });
+      return res.status(403).json({
+        erreur: "accès interdit",
+      });
     }
+
     next();
   };
 }
 ```
 
-On les enchaîne sur la route à protéger. L'ordre encode les préconditions : on authentifie d'abord, on autorise ensuite, puis on sert.
+On peut enfin composer les deux :
 
 ```js
-app.get("/admin/rapports", authentifier, exigerRole("admin"), (req, res) => {
-  res.json({ rapports: [] });
-});
+app.get(
+  "/admin/rapports",
+  authentifier,
+  exigerRole("admin"),
+  (req, res) => {
+    res.json({
+      rapports: [],
+    });
+  }
+);
 ```
 
-<MarginNote type="rappel" titre="401 contre 403">
-`401` quand la preuve d'identité manque (échec d'authentification), `403` quand l'identité est établie mais les droits insuffisants (échec d'autorisation). La distinction vient de [Identité, authentification, autorisation](/notes/identite-authentification-autorisation).
+<MarginNote type="rappel" titre="401 ou 403 ?">
+`401` indique que l'identité requise n'a pas pu être établie.
+
+`403` indique que l'identité est connue, mais que cet utilisateur n'a pas les droits nécessaires pour effectuer l'action demandée.
 </MarginNote>
 
 <MarginNote type="plusloin">
-Pour une **session** plutôt qu'un jeton, on persiste l'identifiant de session dans MongoDB avec `connect-mongo`, et le middleware lit `req.session` au lieu de l'en-tête (voir [Mémoire serveur](/notes/persistance-serveur)). Des bibliothèques comme Passport encapsulent ce motif, sans le changer : lire une preuve, la vérifier, poser l'utilisateur sur `req`, laisser passer ou refuser.
+Avec une session serveur, le mécanisme général reste similaire : un middleware retrouve la session, établit l'utilisateur associé et place les informations utiles dans `req`. Des bibliothèques comme Passport peuvent encapsuler une partie de ce processus.
 </MarginNote>
+ */}
+
+{/* ## 6. Préparer une ressource avant le gestionnaire
+
+Un middleware n'est pas limité à l'authentification.
+
+Il peut également préparer des informations dont plusieurs routes auront besoin.
+
+Supposons une API contenant des boites :
+
+```txt
+GET    /boites/:id
+DELETE /boites/:id
+PUT    /boites/:id
+```
+
+Ces routes ont toutes deux besoins communs :
+
+1. vérifier que `id` possède une forme acceptable;
+2. vérifier que la boite existe.
+
+On peut isoler ces responsabilités.
+
+### 6.1 Vérifier l'identifiant
+
+```js
+// intergiciels/boites.js
+import mongoose from "mongoose";
+
+export function verifierId(req, res, next) {
+  if (!mongoose.isValidObjectId(req.params.id)) {
+    return res.status(400).json({
+      erreur: "identifiant invalide",
+    });
+  }
+
+  next();
+}
+```
+
+### 6.2 Charger la ressource
+
+```js
+import { Boite } from "../modeles/boite.js";
+
+export async function chargerBoite(req, res, next) {
+  const boite =
+    await Boite.findById(req.params.id);
+
+  if (!boite) {
+    return res.status(404).json({
+      erreur: "boite introuvable",
+    });
+  }
+
+  req.boite = boite;
+
+  next();
+}
+```
+
+Après `chargerBoite`, les gestionnaires peuvent supposer que `req.boite` existe.
+
+```js
+app.get(
+  "/boites/:id",
+  verifierId,
+  chargerBoite,
+  (req, res) => {
+    res.json(req.boite);
+  }
+);
+```
+
+La même chaîne peut être réutilisée :
+
+```js
+app.delete(
+  "/boites/:id",
+  verifierId,
+  chargerBoite,
+  async (req, res) => {
+    await req.boite.deleteOne();
+    res.status(204).end();
+  }
+);
+```
+
+<Highlight>
+Le gestionnaire peut maintenant se concentrer sur l'action à accomplir. Les vérifications communes ont déjà été effectuées.
+</Highlight>
+
+<MarginNote type="attention" titre="Pourquoi vérifier avant de charger ?">
+Un identifiant MongoDB mal formé ne signifie pas que le serveur est en panne. Il s'agit d'une requête invalide du client. La vérification préalable permet donc de répondre clairement avec un `400` avant d'interroger la base de données.
+</MarginNote>
+
+<Checkpoint question="Après l'exécution réussie de chargerBoite, quelle information le gestionnaire peut-il considérer comme disponible ?">
+`req.boite`. Le middleware a soit trouvé la boite et appelé `next()`, soit répondu `404`. Un gestionnaire atteint après ce middleware travaille donc avec une ressource déjà chargée.
+</Checkpoint>
+
+## 7. Valider le corps d'une requête
+
+La validation constitue un autre bon candidat pour un middleware.
+
+Avant de créer une boite, on souhaite par exemple vérifier :
+
+```json
+{
+  "nom": "Archives",
+  "capacite": 40
+}
+```
+
+Les règles peuvent varier selon les ressources, mais le mécanisme reste similaire.
+
+On peut donc créer une **fabrique de middleware**.
+
+<MarginNote type="definition" titre="Fabrique de middleware">
+Une fabrique de middleware est une fonction qui retourne un middleware configuré.
+
+`exigerRole("admin")` en est déjà un exemple : `"admin"` configure le middleware qui sera ensuite exécuté par Express.
+</MarginNote>
+
+```js
+export function validerCorps(regles) {
+  return (req, res, next) => {
+    const corps = req.body ?? {};
+    const erreurs = [];
+
+    for (const [champ, verifier] of Object.entries(regles)) {
+      const message =
+        verifier(corps[champ]);
+
+      if (message) {
+        erreurs.push({
+          champ,
+          message,
+        });
+      }
+    }
+
+    if (erreurs.length > 0) {
+      return res.status(400).json({
+        erreurs,
+      });
+    }
+
+    next();
+  };
+}
+```
+
+Les règles d'une boite peuvent alors être définies séparément :
+
+```js
+const reglesBoite = {
+  nom: (valeur) =>
+    typeof valeur === "string" &&
+    valeur.trim() !== ""
+      ? null
+      : "nom requis",
+
+  capacite: (valeur) =>
+    Number.isInteger(valeur) &&
+    valeur > 0
+      ? null
+      : "entier positif attendu",
+};
+```
+
+Puis appliquées à la route :
+
+```js
+app.post(
+  "/boites",
+  validerCorps(reglesBoite),
+  creerBoite
+);
+```
+
+Le gestionnaire `creerBoite` ne doit plus lui-même répéter toutes les vérifications.
+
+<MarginNote type="attention" titre="Un corps absent">
+`req.body` peut être `undefined`, notamment lorsqu'aucun corps n'a été lu. L'expression `req.body ?? {}` garantit donc que la validation travaille au minimum avec un objet vide.
+</MarginNote>
+
+<MarginNote type="plusloin">
+Dans une véritable application, on utilise souvent une bibliothèque de validation comme Zod ou express-validator. Le principe reste semblable : définir les règles une fois et appliquer la validation avant le gestionnaire de route.
+</MarginNote>
+
+## 8. Observer la fin d'une réponse
+
+Les middlewares vus jusqu'ici prennent principalement des décisions **avant** que le gestionnaire produise sa réponse.
+
+Un middleware peut toutefois enregistrer une action qui sera déclenchée plus tard dans le cycle de la réponse.
+
+On peut par exemple mesurer le temps nécessaire au traitement complet d'une requête.
+
+```js
+// intergiciels/mesure.js
+
+export function mesurerDuree(req, res, next) {
+  const debut = performance.now();
+
+  res.on("finish", () => {
+    const duree =
+      (performance.now() - debut).toFixed(1);
+
+    console.log(
+      `${req.method} ${req.originalUrl} ` +
+      `${res.statusCode} ${duree} ms`
+    );
+  });
+
+  next();
+}
+```
+
+Puis :
+
+```js
+app.use(mesurerDuree);
+```
+
+Le middleware :
+
+1. note l'heure de départ;
+2. enregistre une fonction qui sera appelée lorsque la réponse sera terminée;
+3. appelle immédiatement `next()` pour poursuivre le traitement.
+
+<Highlight>
+La réponse ne retraverse pas les middlewares en sens inverse. Ici, le middleware enregistre plutôt un observateur qui sera déclenché lorsque la réponse sera terminée.
+</Highlight>
+
+### Pourquoi ne pas simplement écrire du code après `next()` ?
+
+On pourrait être tenté d'écrire :
+
+```js
+function mesurerDuree(req, res, next) {
+  const debut = performance.now();
+
+  next();
+
+  console.log(
+    performance.now() - debut
+  );
+}
+```
+
+Mais `next()` transmet le contrôle à l'étape suivante. Cela ne signifie pas nécessairement que toutes les opérations asynchrones et l'envoi de la réponse sont terminés au moment où le code suivant s'exécute.
+
+L'événement `finish` constitue donc un meilleur point d'observation de la fin de la réponse.
+
+<Checkpoint question="Que se passe-t-il si mesurerDuree est placé après authentifier ?">
+Les requêtes interrompues par `authentifier`, par exemple avec un `401`, n'atteignent jamais `mesurerDuree`. Aucun observateur `finish` n'est alors enregistré pour ces requêtes. Si l'objectif est de mesurer toutes les requêtes, `mesurerDuree` doit être placé suffisamment tôt dans la chaîne.
+</Checkpoint>
+
+## 9. Un principe que l'on retrouve ailleurs
+
+La chaîne de middlewares Express illustre un principe plus général :
+
+> placer des traitements transversaux entre l'entrée d'une requête et la logique principale de l'application.
+
+On retrouve des idées semblables dans d'autres architectures.
+
+### Passerelle d'API
+
+Dans une architecture composée de plusieurs services, une **passerelle d'API** peut être placée devant ceux-ci.
+
+Elle peut notamment prendre en charge :
+
+- l'authentification;
+- la limitation du nombre de requêtes;
+- le routage;
+- la journalisation.
+
+```txt
+client
+  ↓
+passerelle d'API
+  ↓
+service
+```
+
+### Side-car et maillage de services
+
+Certaines architectures ajoutent également un proxy près de chaque service afin de prendre en charge des responsabilités comme :
+
+- le chiffrement des communications;
+- l'observabilité;
+- certaines stratégies de reprise;
+- le contrôle du trafic.
+
+Le niveau architectural est très différent de celui d'Express, mais l'intention générale se ressemble : **retirer certaines responsabilités transversales de la logique métier principale**.
+
+<Highlight couleur="ambre">
+Le middleware Express est donc un exemple concret d'une idée plus générale : décomposer le traitement en responsabilités composables plutôt que concentrer toute la logique dans chaque route.
+</Highlight> */}
+
+## À retenir
+
+Un middleware Express est une étape intermédiaire du traitement d'une requête.
+
+Il peut notamment :
+
+- observer ou modifier `req` et `res`;
+- appeler `next()` pour poursuivre;
+- produire directement une réponse;
+- transmettre une erreur;
+- préparer des informations pour les étapes suivantes.
+
+L'ordre dans lequel les middlewares sont montés détermine leur ordre d'exécution.
