@@ -1,9 +1,25 @@
 import { DATA } from "./data.js"
 import express from 'express';
-import { listerCours, trouverCours, listerCreneaux, trouverCreneau, listerTravaux, trouverTravail } from "./dataService.js";
+import { listerCours, trouverCours, listerCreneaux, trouverCreneau, listerTravaux, trouverTravail, trouverUtilisateur } from "./dataService.js";
+import travailRouter from "./routes/travailRouter.js";
+import authRouter from "./routes/authRouter.js";
 
 const app = express();
-app.use(express.json())
+app.use(express.json());
+
+export function verifierCle(req, res, next) {
+    if (!req.headers["x-api-key"]) {
+        return res.status(401).json({
+            erreur: "clé manquante",
+        });
+    }
+
+    next();
+}
+
+
+// app.use(verifierCle);
+
 
 // Petite page d'accueil retournant la liste des routes disponibles.
 app.get("/", (req, res) => {
@@ -18,7 +34,7 @@ app.get("/", (req, res) => {
 });
 
 // Récupérer tous les cours.
-app.get("/cours", (req, res) => {
+app.get("/cours", verifierCle, (req, res) => {
     const result = listerCours();
 
     res.json(result);
@@ -55,29 +71,8 @@ app.get("/creneaux/:id", (req, res) => {
     res.json(creneau);
 });
 
-// Récupérer tous les travaux ouverts par défaut.
-// ?cours=serveur  filtre par cours
-app.get("/travaux", (req, res) => {
-    const { cours } = req.query;
-
-    const travaux = listerTravaux(cours);
-
-    res.json(travaux);
-});
-
-// Récupérer un travail à l'aide de son identifiant.
-app.get("/travaux/:id", (req, res) => {
-    const { id } = req.params;
-    const travail = trouverTravail(id);
-
-    if (travail === null) {
-        res.status(404).json({ message: `Le travail ${id} n'existe pas.` });
-        return;
-    }
-
-    res.json(travail);
-});
-
+app.use("/", authRouter);
+app.use("/travaux", travailRouter);
 
 // Chemin inconnu.
 app.use((req, res) => {

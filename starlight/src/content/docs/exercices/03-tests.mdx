@@ -1,0 +1,739 @@
+---
+title: "Exercices : les fondements des tests unitaires"
+description: "Une initiation progressive aux tests unitaires avec Vitest : trois activités préparatoires, puis cinq exercices sur un comptoir de prêt de matériel."
+---
+
+import MarginNote from "../../../components/MarginNote.astro";
+import Highlight from "../../../components/Highlight.astro";
+import Checkpoint from "../../../components/Checkpoint.astro";
+
+{/* <MarginNote type="prerequis">
+Ces exercices mettent en pratique [Tester une API Express](/notes/express-tester). Pour commencer, il suffit de connaître les fonctions JavaScript et d'avoir vu les premiers exemples de tests avec Vitest. Les exercices plus avancés abordent notamment les cas limites, les erreurs et la couverture.
+</MarginNote> */}
+
+Nous allons d'abord nous entraîner avec quelques fonctions JavaScript très simples, avant de passer à un contexte plus réaliste : un **comptoir de prêt de matériel** qui prête des ordinateurs portables, des caméras et des trépieds aux étudiants. Les fonctions du projet sont déjà écrites. Votre travail consiste à vérifier leur comportement à l'aide de tests automatisés. Les tests pourront ensuite servir à détecter d'éventuelles régressions lorsque le code évoluera.
+
+{/* Cette page propose trois activités préparatoires, puis les exercices 1 à 5, qui portent sur les fonctions du dossier `src/regles`. Les exercices 6 à 10, sur le service, les intergiciels et l'API complète, sont sur la page [Exercices : tester une API](/exercices/tests-api). */}
+
+## Première étape : s'entraîner avec des fonctions simples
+
+Avant de travailler sur l'API, nous allons écrire quelques tests pour des fonctions dont le résultat est facile à prévoir. L'objectif est d'apprendre **comment écrire, exécuter et interpréter un test**, et non de résoudre un problème complexe.
+
+### Préparer Vitest
+
+Dans un nouveau dossier de travail, initialisez un projet Node.js et installez Vitest :
+
+```bash
+npm init -y
+npm install --save-dev vitest
+```
+
+Dans le fichier `package.json`, ajoutez le script suivant dans la section `scripts` :
+
+```json
+"scripts": {
+  "test": "vitest run"
+}
+```
+
+Conservez les autres propriétés déjà présentes dans le fichier. Créez ensuite deux dossiers : `src/` pour les fonctions et `tests/` pour leurs tests. Les exemples ci-dessous utilisent la syntaxe `import` et `export` : ajoutez également `"type": "module"` au `package.json` si ce n'est pas déjà fait.
+
+Pour exécuter les tests, utilisez toujours :
+
+```bash
+npm run test
+```
+
+### Entraînement A — Tester une addition
+
+**Objectif :** comprendre le rôle de `it`, `expect` et `toBe`.
+
+Créez le fichier `src/calculs.js` :
+
+```js
+export function additionner(a, b) {
+  return a + b;
+}
+```
+
+Puis créez `tests/calculs.test.js` :
+
+```js
+import { it, expect } from "vitest";
+import { additionner } from "../src/calculs.js";
+
+it("additionne deux nombres positifs", () => {
+  const resultat = additionner(2, 3);
+  expect(resultat).toBe(5);
+});
+```
+
+1. Exécutez `npm run test`. Combien de tests ont été exécutés ? Ont-ils réussi ?
+2. Remplacez temporairement `toBe(5)` par `toBe(6)`, puis relancez les tests. Que signifie le message d'échec ?
+3. Rétablissez `toBe(5)` et écrivez deux tests supplémentaires : une addition avec zéro et une addition avec un nombre négatif.
+4. Dans chaque test, repérez la **préparation**, l'**exécution** et la **vérification** (structure AAA).
+
+<details>
+<summary>Exemple de corrigé — entraînement A</summary>
+
+```js
+import { it, expect } from "vitest";
+import { additionner } from "../src/calculs.js";
+
+it("additionne deux nombres positifs", () => {
+  const resultat = additionner(2, 3);
+  expect(resultat).toBe(5);
+});
+
+it("additionne zéro à un nombre", () => {
+  expect(additionner(8, 0)).toBe(8);
+});
+
+it("additionne un nombre négatif", () => {
+  expect(additionner(8, -3)).toBe(5);
+});
+```
+
+Un test qui échoue signale que le résultat obtenu ne correspond pas à celui indiqué dans l'assertion. Ici, le changement à `toBe(6)` fait échouer volontairement le premier test.
+
+</details>
+
+### Entraînement B — Tester une condition
+
+**Objectif :** vérifier les résultats `true` et `false` et choisir plusieurs cas de test.
+
+Ajoutez cette fonction à `src/calculs.js` :
+
+```js
+export function estMajeur(age) {
+  return age >= 18;
+}
+```
+
+Dans `tests/calculs.test.js`, importez également `estMajeur`, puis écrivez des tests qui vérifient les comportements suivants :
+
+1. Une personne de 20 ans est majeure.
+2. Une personne de 16 ans n'est pas majeure.
+3. Une personne de 18 ans est majeure.
+4. Une personne de 17 ans n'est pas majeure.
+
+Les deux derniers cas sont particulièrement intéressants : ils permettent de vérifier la limite entre les valeurs acceptées et refusées.
+
+<details>
+<summary>Exemple de corrigé — entraînement B</summary>
+
+```js
+it("accepte une personne de 20 ans", () => {
+  expect(estMajeur(20)).toBe(true);
+});
+
+it("refuse une personne de 16 ans", () => {
+  expect(estMajeur(16)).toBe(false);
+});
+
+it("accepte une personne de 18 ans", () => {
+  expect(estMajeur(18)).toBe(true);
+});
+
+it("refuse une personne de 17 ans", () => {
+  expect(estMajeur(17)).toBe(false);
+});
+```
+
+Ces tests vérifient uniquement la règle `age >= 18` : la fonction ne valide pas que l'entrée est un nombre ou un âge réaliste.
+
+</details>
+
+### Entraînement C — Tester une chaîne de caractères
+
+**Objectif :** écrire des tests à partir d'une description de comportement, sans recevoir tous les résultats attendus.
+
+Créez `src/textes.js` :
+
+```js
+export function estTexteNonVide(texte) {
+  return typeof texte === "string" && texte.trim().length > 0;
+}
+```
+
+Dans `tests/textes.test.js`, écrivez un test pour chacune des valeurs suivantes :
+
+| Valeur | Question à vérifier |
+|---|---|
+| `"Bonjour"` | Un texte ordinaire est-il accepté ? |
+| `""` | Une chaîne vide est-elle refusée ? |
+| `"   "` | Une chaîne composée uniquement d'espaces est-elle refusée ? |
+| `"  Bonjour  "` | Les espaces autour du texte changent-ils le résultat ? |
+| `42` | Que se passe-t-il si la valeur n'est pas une chaîne ? |
+
+Pour chaque cas, déterminez d'abord le résultat attendu, puis écrivez votre assertion avec `expect(...).toBe(...)`.
+
+<details>
+<summary>Exemple de corrigé — entraînement C</summary>
+
+```js
+import { it, expect } from "vitest";
+import { estTexteNonVide } from "../src/textes.js";
+
+it("accepte un texte ordinaire", () => {
+  expect(estTexteNonVide("Bonjour")).toBe(true);
+});
+
+it("refuse une chaîne vide", () => {
+  expect(estTexteNonVide("")).toBe(false);
+});
+
+it("refuse une chaîne composée uniquement d'espaces", () => {
+  expect(estTexteNonVide("   ")).toBe(false);
+});
+
+it("accepte un texte entouré d'espaces", () => {
+  expect(estTexteNonVide("  Bonjour  ")).toBe(true);
+});
+
+it("refuse une valeur numérique", () => {
+  expect(estTexteNonVide(42)).toBe(false);
+});
+```
+
+</details>
+
+<Checkpoint question="Quelle est la différence entre exécuter une fonction dans un test et vérifier son résultat avec expect ?">
+Appeler une fonction permet d'exécuter du code, mais ne permet pas, à lui seul, de déterminer si le résultat est correct. Une assertion avec `expect` compare le comportement observé à celui attendu. Sans assertion, un test peut réussir sans avoir réellement vérifié le comportement recherché.
+</Checkpoint>
+
+## Deuxième étape : tester les règles du comptoir de prêt
+
+Vous allez maintenant reprendre les mêmes principes dans un projet plus réaliste. Les fonctions y sont déjà écrites et les fichiers de tests contiennent des cas à compléter.
+
+### Préparer le projet du comptoir
+
+Téléchargez le projet de départ (sur Léa), décompressez-le, puis, dans son dossier, exécutez :
+
+```bash
+npm install
+npm run test
+```
+
+Le résultat initial devrait ressembler à ceci :
+
+```text
+ Test Files  1 failed | 1 passed | 8 skipped (10)
+      Tests  8 failed | 2 passed | 38 todo (48)
+```
+
+Les tests marqués `todo` sont ceux que vous allez écrire. Les échecs de l'exercice 10 sont prévus : ce dernier demande aussi de compléter le code de l'application.
+
+Pour exécuter seulement les tests d'un exercice, vous pouvez transmettre le début du nom du fichier à Vitest :
+
+```bash
+npm run test -- tests/01
+```
+
+Cette commande suppose que le script `test` du projet lance `vitest run`. Le séparateur `--` transmet l'argument `tests/01` à Vitest.
+
+<MarginNote type="syntaxe" titre="it.todo">
+`it.todo("refuse un matricule de 6 chiffres")` déclare un test **à écrire**. Vitest l'affiche dans le décompte sans l'exécuter. Pour l'écrire, remplacez `it.todo("...")` par `it("...", () => { ... })`.
+</MarginNote>
+
+<Highlight couleur="ambre">Sauf à l'exercice 10, ne modifiez pas le dossier `src/` du projet de comptoir : vous écrivez des tests pour du code existant.</Highlight>
+
+### Les règles du comptoir
+
+Toutes les règles utiles à cette page sont dans `src/regles/` :
+
+| Règle | Fichier | Fonction |
+|---|---|---|
+| Un matricule est une chaîne composée exactement de 7 chiffres | `pret.js` | `estMatriculeValide` |
+| Un prêt dure de 1 à 14 jours, en jours entiers | `pret.js` | `estDureeValide` |
+| Frais de retard : 1 jour de grâce, puis 2 $ par jour, au plus 20 $ | `frais.js` | `calculerFraisRetard` |
+| Les jours de retard se comptent en jours du calendrier | `retard.js` | `joursDeRetard` |
+| Le tableau de bord résume les prêts actifs à une date donnée | `resume.js` | `resumerPrets` |
+
+Chaque exercice ajoute une difficulté : un booléen, puis des limites, un calcul, des dates et des erreurs, et enfin une fonction qui combine les précédentes sur une liste d'objets.
+
+## Exercice 1 : un premier test
+
+**Objectif** : appliquer la structure AAA dans un projet existant et constater qu’un test sans assertion ne vérifie pas le résultat attendu.
+
+Ouvrez `tests/01-matricule.test.js`.
+
+1. **Avant d'écrire quoi que ce soit**, lancez `npm run test -- tests/01`. Le test « accepte un matricule de 7 chiffres » réussit, alors qu'il est vide. Pourquoi ?
+2. Complétez ce premier test en suivant les trois commentaires : préparez un matricule valide, appelez `estMatriculeValide`, vérifiez le résultat avec `expect`.
+3. Provoquez un échec volontaire : remplacez temporairement `toBe(true)` par `toBe(false)`, lancez le test et lisez le message. Quelle ligne indique la valeur obtenue, et laquelle la valeur attendue ? Remettez ensuite `toBe(true)`.
+4. Transformez les trois `it.todo` en vrais tests. Un test par cas, une seule vérification par test.
+
+<MarginNote type="rappel" titre="Pourquoi provoquer un échec">
+Provoquer volontairement un échec permet de comprendre comment Vitest signale une différence entre résultat attendu et résultat obtenu. Cela ne suffit pas, à lui seul, à garantir la qualité du test.
+</MarginNote>
+
+<details>
+<summary>Corrigé de l'exercice 1</summary>
+
+**Question 1.** Un test réussit dès qu'il se termine sans erreur. Un test vide ne vérifie rien, donc il ne peut pas échouer. C'est la même leçon que la section 9.2 des notes : du code exécuté n'est pas du code vérifié.
+
+**Question 3.** Le message d'échec ressemble à ceci :
+
+```
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+```
+
+La ligne `- Expected` annonce la valeur attendue (`false`), la ligne `+ Received` la valeur obtenue (`true`). Vitest indique aussi le fichier et la ligne du `expect` en cause.
+
+**Questions 2 et 4.**
+
+```js
+// Exercice 1 : un premier test
+import { describe, it, expect } from "vitest";
+import { estMatriculeValide } from "../src/regles/pret.js";
+
+describe("estMatriculeValide", () => {
+  it("accepte un matricule de 7 chiffres", () => {
+    // Préparer
+    const matricule = "2034567";
+
+    // Exécuter
+    const resultat = estMatriculeValide(matricule);
+
+    // Vérifier
+    expect(resultat).toBe(true);
+  });
+
+  it("refuse un matricule de 6 chiffres", () => {
+    expect(estMatriculeValide("203456")).toBe(false);
+  });
+
+  it("refuse un matricule qui contient une lettre", () => {
+    expect(estMatriculeValide("203456A")).toBe(false);
+  });
+
+  it("refuse un nombre, même s'il a 7 chiffres", () => {
+    expect(estMatriculeValide(2034567)).toBe(false);
+  });
+
+  // Pour aller plus loin
+  it("refuse un matricule de 8 chiffres", () => {
+    expect(estMatriculeValide("20345678")).toBe(false);
+  });
+
+  it("refuse un matricule entouré d'espaces", () => {
+    expect(estMatriculeValide(" 2034567 ")).toBe(false);
+  });
+});
+```
+
+Les deux derniers tests vont au-delà de ce qui était demandé. Le cas « entouré d'espaces » est un bon réflexe : une valeur copiée d'un formulaire en contient souvent.
+
+</details>
+
+## Exercice 2 : les cas limites
+
+**Objectif** : trouver les cas limites d'une règle et les tester sans répéter le même test.
+
+La règle : un prêt dure **de 1 à 14 jours inclusivement**, en jours entiers. La valeur 14 est exportée sous le nom `DUREE_MAX`.
+
+```js
+// regles/pret.js (extrait)
+export const DUREE_MAX = 14;             // jours
+
+// Une durée de prêt est un nombre entier de jours, de 1 à DUREE_MAX inclusivement.
+export const estDureeValide = (j) => Number.isInteger(j) && j >= 1 && j <= DUREE_MAX;
+```
+
+1. Avant d'écrire du code, faites la liste des valeurs à essayer. Classez-les en trois groupes : un cas nominal, les cas limites (les deux limites, et juste à côté de chacune), les cas invalides d'un autre genre (pas un entier, pas un nombre, absent).
+2. Écrivez ces tests dans `tests/02-duree.test.js` avec `it.each`, un appel par groupe.
+3. Utilisez `DUREE_MAX` plutôt que le nombre 14 dans vos tests. Si la direction allonge la durée maximale à 21 jours, quels tests devrez-vous modifier ?
+
+<MarginNote type="syntaxe" titre="it.each">
+`it.each([1, 14])("accepte la limite %i", (jours) => { ... })` exécute le même test une fois par valeur du tableau. Dans le titre, `%i` est remplacé par la valeur quand c'est un entier, `%s` par sa forme texte, et `%j` par sa forme JSON, utile pour distinguer `7` de `"7"`.
+</MarginNote>
+
+<details>
+<summary>Corrigé de l'exercice 2</summary>
+
+**Question 1.**
+
+| Groupe | Valeurs | Résultat attendu |
+|---|---|---|
+| Nominal | 7 | accepté |
+| Limites | 1, 14 | acceptées |
+| Juste hors limites | 0, 15 | refusées |
+| Autres invalides | -3, 2.5, `"7"`, `null`, `undefined` | refusées |
+
+Les valeurs 0 et 15 sont les plus importantes de la liste : une erreur courante est d'écrire `<` au lieu de `<=`, et seules les valeurs collées aux limites la détectent.
+
+**Question 2.**
+
+```js
+// Exercice 2 : les cas limites
+import { describe, it, expect } from "vitest";
+import { estDureeValide, DUREE_MAX } from "../src/regles/pret.js";
+
+describe("estDureeValide", () => {
+  it("accepte une durée ordinaire", () => {
+    expect(estDureeValide(7)).toBe(true);
+  });
+
+  // Les limites elles-mêmes, qui doivent être acceptées
+  it.each([1, DUREE_MAX])("accepte la limite %i", (jours) => {
+    expect(estDureeValide(jours)).toBe(true);
+  });
+
+  // Juste à côté des limites, qui doivent être refusées
+  it.each([0, DUREE_MAX + 1])("refuse %i, juste hors limite", (jours) => {
+    expect(estDureeValide(jours)).toBe(false);
+  });
+
+  // Des valeurs d'un autre genre
+  it.each([-3, 2.5, "7", null, undefined])("refuse %j", (valeur) => {
+    expect(estDureeValide(valeur)).toBe(false);
+  });
+});
+```
+
+**Question 3.** Les tests utilisant `DUREE_MAX` et `DUREE_MAX + 1` suivront automatiquement la nouvelle constante. Il faudra néanmoins vérifier que les attentes correspondent toujours au besoin métier et ajouter au besoin un test fixant explicitement la nouvelle limite. Un test qui aurait écrit `estDureeValide(15)` attendu à `false` deviendrait faux, puisque 15 jours seraient alors acceptés.
+
+</details>
+
+
+## Exercice 3 : un calcul comportant plusieurs cas
+
+**Objectif** : tester un calcul dont le comportement change selon l'entrée, et utiliser la couverture pour trouver le cas oublié.
+
+La règle des frais de retard :
+
+- jusqu'à **1 jour** de retard (le délai de grâce) : aucun frais ;
+- au-delà : **2 $ par jour** de retard, en comptant tous les jours ;
+- jamais plus de **20 $** ;
+- un nombre de jours qui n'est pas un entier positif ou nul est refusé par une `RangeError`.
+
+```js
+// regles/frais.js
+export const DELAI_GRACE = 1;      // jours de retard tolérés sans frais
+export const TARIF_PAR_JOUR = 2;   // dollars par jour de retard
+export const PLAFOND = 20;         // dollars, au maximum
+
+export function calculerFraisRetard(jours) {
+  if (!Number.isInteger(jours) || jours < 0) {
+    throw new RangeError("nombre de jours invalide");
+  }
+  if (jours <= DELAI_GRACE) return 0;
+  return Math.min(jours * TARIF_PAR_JOUR, PLAFOND);
+}
+```
+
+1. **Sur papier d'abord**, complétez ce tableau : 0, 1, 2, 5, 10, 11 et 30 jours de retard. Pour chaque valeur, notez les frais attendus et pourquoi vous l'avez choisie.
+2. Dans `tests/03-frais.test.js`, écrivez d'abord **un seul** test : 5 jours coûtent 10 $. Lancez `npm run couverture:frais` (script de couverture fourni avec le projet de comptoir) et notez les colonnes des lignes (`% Lines`) et des branches (`% Branch`).
+3. Écrivez maintenant tout le tableau avec `it.each`, en passant des paires `[jours, attendu]`. Relancez la couverture. Quelle colonne a bougé, et laquelle est restée la même ?
+4. Le rapport signale encore la ligne 8. Que fait-elle ? Écrivez les tests qui l'exécutent, jusqu'à 100 % dans toutes les colonnes.
+5. Une suite de trois tests seulement (0 jour, 5 jours, et une valeur refusée) atteint elle aussi 100 %. Les cas 1, 10 et 11 jours n'ajoutent donc rien à la couverture. Pourquoi les garder ?
+
+<MarginNote type="syntaxe" titre="it.each avec des paires">
+`it.each([[0, 0], [5, 10]])("%i jour(s) coûtent %i $", (jours, attendu) => { ... })` : chaque paire fournit les deux paramètres du test, dans l'ordre, et les deux `%i` du titre.
+</MarginNote>
+
+<MarginNote type="erreur" titre="toThrow attend une fonction">
+`expect(calculerFraisRetard(-1)).toThrow()` ne fonctionne pas : `calculerFraisRetard(-1)` est appelée **avant** `expect`, l'erreur interrompt le test, et `toThrow` n'a jamais l'occasion de l'attraper. Il faut lui confier une fonction qu'il appellera lui-même : `expect(() => calculerFraisRetard(-1)).toThrow()`.
+</MarginNote>
+
+<details>
+<summary>Corrigé de l'exercice 3</summary>
+
+**Question 1.**
+
+| Jours | Frais | Pourquoi cette valeur |
+|---|---|---|
+| 0 | 0 $ | aucun retard |
+| 1 | 0 $ | limite du délai de grâce |
+| 2 | 4 $ | premier jour facturé : tous les jours comptent, pas seulement le 2e |
+| 5 | 10 $ | cas ordinaire |
+| 10 | 20 $ | le plafond est atteint tout juste |
+| 11 | 20 $ | juste après le plafond |
+| 30 | 20 $ | très en retard |
+
+**Questions 2 et 3.** Avec le seul test de 5 jours :
+
+```
+ frais.js |      75 |    66.66 |     100 |   85.71 | 8
+```
+
+Avec tout le tableau :
+
+```
+ frais.js |    87.5 |    83.33 |     100 |   85.71 | 8
+```
+
+Les branches ont progressé : le cas 0 jour emprunte enfin le `return 0` du délai de grâce. Les lignes, elles, n'ont pas bougé. Ce `return 0` est écrit sur la même ligne que son `if`, déjà exécutée par le test de 5 jours. La colonne des branches est celle qui voit le cas manquant, comme à la section 9.1 des notes.
+
+**Question 4.** La ligne 8 est le `throw` : aucun test n'a encore passé une valeur refusée.
+
+```js
+// Exercice 3 : un calcul comportant plusieurs cas, et sa couverture
+import { describe, it, expect } from "vitest";
+import { calculerFraisRetard } from "../src/regles/frais.js";
+
+describe("calculerFraisRetard", () => {
+  it.each([
+    [0, 0],    // aucun retard
+    [1, 0],    // limite du délai de grâce
+    [2, 4],    // premier jour facturé
+    [5, 10],   // cas ordinaire
+    [10, 20],  // le plafond est atteint tout juste
+    [11, 20],  // juste après le plafond
+    [30, 20],  // très en retard
+  ])("%i jour(s) de retard coûtent %i $", (jours, attendu) => {
+    expect(calculerFraisRetard(jours)).toBe(attendu);
+  });
+
+  // Ajouté après la mesure de couverture : la ligne du throw n'était jamais exécutée.
+  it.each([-1, 2.5, "3"])("refuse %j", (valeur) => {
+    expect(() => calculerFraisRetard(valeur)).toThrow(RangeError);
+  });
+});
+```
+
+Le rapport n'affiche alors plus aucun fichier, seulement « No files with missing coverage » et un résumé à 100 % : Vitest masque les fichiers entièrement couverts.
+
+**Question 5.** Parce que la couverture dit ce qui a été **exécuté**, pas ce qui a été **vérifié**. Si quelqu'un écrivait `jours < DELAI_GRACE` au lieu de `<=`, seul le cas 1 jour échouerait ; 0 et 5 jours donneraient toujours le bon résultat. De même, seuls 10 et 11 jours vérifient que le plafond s'applique au bon moment. Ces cas limites détectent des erreurs que la couverture ne mesure pas.
+
+</details>
+
+## Exercice 4 : des dates, et des erreurs levées
+
+**Objectif** : tester une fonction qui manipule des dates, choisir des données qui donnent le même résultat sur tous les ordinateurs, et vérifier précisément une erreur levée.
+
+```js
+// regles/retard.js
+const MS_PAR_JOUR = 24 * 60 * 60 * 1000;
+
+const estDate = (d) => d instanceof Date && !Number.isNaN(d.getTime());
+
+// Le jour du calendrier d'une date, sans tenir compte de l'heure.
+const jourCalendaire = (d) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+
+// Nombre de jours entre l'échéance et le retour ; 0 si le retour n'est pas en retard.
+export function joursDeRetard(echeance, retour) {
+  if (!estDate(echeance) || !estDate(retour)) {
+    throw new TypeError("date invalide");
+  }
+  const ecart = (jourCalendaire(retour) - jourCalendaire(echeance)) / MS_PAR_JOUR;
+  return Math.max(ecart, 0);
+}
+```
+
+La fonction compte des jours **du calendrier** : un retour le 13 octobre pour une échéance le 10 octobre, c'est 3 jours de retard, quelles que soient les heures.
+
+<MarginNote type="syntaxe" titre="Écrire une date dans un test">
+`new Date("2026-10-10T17:00")` désigne le 10 octobre 2026 à 17 h, **heure locale**. Attention : sans l'heure, `new Date("2026-10-10")` est interprété en temps universel (UTC). À Montréal, cela donne le 9 octobre à 20 h, et un test peut alors se tromper d'un jour selon le fuseau horaire de l'ordinateur.
+</MarginNote>
+
+1. Écrivez le cas nominal en style AAA : échéance le 10 octobre à 17 h, retour le 13 octobre à 10 h.
+2. Écrivez les trois cas limites : un retour **avant** l'échéance, un retour **le jour même** à une heure plus tardive, et un retour **le lendemain**, moins de 24 heures après l'échéance.
+3. Écrivez le passage d'un mois à l'autre : échéance le 30 octobre, retour le 2 novembre.
+4. Testez les deux refus : une échéance passée sous forme de chaine (`"2026-10-10"`) et une date invalide (`new Date("pas une date")`). Vérifiez à la fois le **type** de l'erreur et son **message**.
+5. La fonction reçoit la date de retour en paramètre, au lieu d'appeler `new Date()` pour obtenir la date du jour. Qu'est-ce que ce choix change pour les tests ?
+6. Une version plus simple de la fonction calculerait `(retour - echeance) / MS_PAR_JOUR`. Avec les dates de la question 3, à 10 h toutes les deux, que donnerait-elle à Montréal ? Indice : que se passe-t-il au Québec le 1er novembre 2026 ?
+
+<details>
+<summary>Corrigé de l'exercice 4</summary>
+
+```js
+// Exercice 4 : des dates, et des erreurs levées
+import { describe, it, expect } from "vitest";
+import { joursDeRetard } from "../src/regles/retard.js";
+
+describe("joursDeRetard", () => {
+  it("compte les jours de retard", () => {
+    // Préparer
+    const echeance = new Date("2026-10-10T17:00");
+    const retour = new Date("2026-10-13T10:00");
+
+    // Exécuter
+    const jours = joursDeRetard(echeance, retour);
+
+    // Vérifier
+    expect(jours).toBe(3);
+  });
+
+  it("donne 0 pour un retour avant l'échéance", () => {
+    const echeance = new Date("2026-10-10T17:00");
+    const retour = new Date("2026-10-08T10:00");
+
+    expect(joursDeRetard(echeance, retour)).toBe(0);
+  });
+
+  it("donne 0 pour un retour le jour même, quelle que soit l'heure", () => {
+    const echeance = new Date("2026-10-10T09:00");
+    const retour = new Date("2026-10-10T23:59");
+
+    expect(joursDeRetard(echeance, retour)).toBe(0);
+  });
+
+  it("compte 1 pour un retour le lendemain", () => {
+    const echeance = new Date("2026-10-10T23:00");
+    const retour = new Date("2026-10-11T08:00");
+
+    expect(joursDeRetard(echeance, retour)).toBe(1);
+  });
+
+  it("compte correctement d'un mois à l'autre", () => {
+    const echeance = new Date("2026-10-30T10:00");
+    const retour = new Date("2026-11-02T10:00");
+
+    expect(joursDeRetard(echeance, retour)).toBe(3);
+  });
+
+  it("refuse une échéance qui n'est pas une Date", () => {
+    const retour = new Date("2026-10-13T10:00");
+
+    expect(() => joursDeRetard("2026-10-10", retour)).toThrow(TypeError);
+    expect(() => joursDeRetard("2026-10-10", retour)).toThrow("date invalide");
+  });
+
+  it("refuse une date invalide", () => {
+    const echeance = new Date("2026-10-10T17:00");
+    const retour = new Date("pas une date");
+
+    expect(() => joursDeRetard(echeance, retour)).toThrow("date invalide");
+  });
+});
+```
+
+**Question 2.** Le cas du lendemain est le plus instructif : 9 heures seulement séparent les deux dates, et pourtant le retour a lieu un autre jour du calendrier. C'est précisément la règle qu'on veut vérifier.
+
+**Question 4.** Vérifier seulement `toThrow(TypeError)` ne suffit pas pour la chaine. Même sans la validation, `"2026-10-10".getFullYear()` lèverait une `TypeError`, par accident : la chaine n'a pas de méthode `getFullYear`. Le test réussirait alors pour une mauvaise raison. Le message `"date invalide"`, lui, ne peut venir que de la validation.
+
+**Question 5.** Avec `new Date()` dans la fonction, le résultat dépendrait du jour où le test est lancé : un test écrit aujourd'hui échouerait demain. En recevant la date en paramètre, la fonction donne toujours le même résultat pour les mêmes données, et le test reste **reproductible**, l'une des quatre qualités d'un bon test vues dans les notes.
+
+**Question 6.** Elle donnerait `3.0416666666666665` au lieu de 3. Le 1er novembre 2026, on recule l'heure au Québec : cette journée dure 25 heures, et l'écart entre les deux dates fait 3 jours et 1 heure. La fonction du comptoir évite ce piège en comparant des jours du calendrier plutôt que des millisecondes. Remarquez que le test de la question 3 ne détecterait ce bogue que sur un ordinateur réglé sur un fuseau qui change d'heure à cette date : en temps universel, la version simple donnerait 3.
+
+</details>
+
+## Exercice 5 : une fonction sur une liste d'objets
+
+**Objectif** : tester une fonction qui reçoit une liste d'objets et retourne un objet, avec des données de test lisibles.
+
+Le tableau de bord du comptoir affiche, chaque matin, un résumé des prêts :
+
+```js
+// regles/resume.js
+import { joursDeRetard } from "./retard.js";
+import { calculerFraisRetard } from "./frais.js";
+
+// Résumé d'une liste de prêts à une date donnée, pour le tableau de bord du comptoir.
+// Seuls les prêts actifs comptent : un prêt rendu n'est plus en retard.
+export function resumerPrets(prets, aujourdhui) {
+  const actifs = prets.filter((p) => p.actif);
+  const retards = actifs.map((p) => joursDeRetard(p.echeance, aujourdhui));
+  return {
+    actifs: actifs.length,
+    enRetard: retards.filter((jours) => jours > 0).length,
+    fraisTotal: retards.reduce((total, jours) => total + calculerFraisRetard(jours), 0),
+  };
+}
+```
+
+Dans `tests/05-resume.test.js`, la date du jour est fixée au 15 octobre 2026 à 9 h, et `pretType` est un prêt actif dont l'échéance, le 20 octobre, est encore à venir. Chaque test en dérive les variantes dont il a besoin.
+
+<MarginNote type="syntaxe" titre="Dériver une variante">
+`{ ...pretType, actif: false }` crée un **nouvel** objet qui copie tous les champs de `pretType`, puis remplace `actif`. `pretType` lui-même n'est pas modifié, et chaque test reste indépendant des autres.
+</MarginNote>
+
+1. Testez la liste vide. Utilisez `toEqual` : il compare le **contenu** de deux objets, là où `toBe` exigerait que ce soit le même objet.
+2. Testez un prêt actif dans les temps.
+3. Testez qu'un prêt rendu est ignoré. Choisissez pour lui une échéance **dépassée depuis longtemps**. Pourquoi ce choix ?
+4. Testez un prêt en retard d'un seul jour. Combien coûte-t-il, et pourquoi compte-t-il quand même parmi les prêts en retard ?
+5. Testez trois prêts ensemble : un dans les temps, un en retard de 5 jours, un en retard de 30 jours. **Calculez le résumé à la main** avant d'écrire le test.
+6. Testez que la fonction ne modifie pas la liste reçue : faites-en une copie avec `structuredClone(prets)` avant l'appel, puis comparez. Choisissez des prêts dont l'ordre changerait si la fonction triait la liste.
+7. Si `calculerFraisRetard` contenait un bogue, des tests de cet exercice échoueraient aussi. S'agit-il encore de tests unitaires ?
+
+<details>
+<summary>Corrigé de l'exercice 5</summary>
+
+```js
+// Exercice 5 : une fonction sur une liste d'objets
+import { describe, it, expect } from "vitest";
+import { resumerPrets } from "../src/regles/resume.js";
+
+const aujourdhui = new Date("2026-10-15T09:00");
+
+// Un prêt actif dont l'échéance est encore à venir. Les tests en dérivent des variantes.
+const pretType = {
+  id: 1,
+  matricule: "2034567",
+  actif: true,
+  echeance: new Date("2026-10-20T17:00"),
+};
+
+describe("resumerPrets", () => {
+  it("résume une liste vide", () => {
+    expect(resumerPrets([], aujourdhui)).toEqual({ actifs: 0, enRetard: 0, fraisTotal: 0 });
+  });
+
+  it("compte un prêt actif dans les temps", () => {
+    expect(resumerPrets([pretType], aujourdhui))
+      .toEqual({ actifs: 1, enRetard: 0, fraisTotal: 0 });
+  });
+
+  it("ignore un prêt rendu", () => {
+    // Rendu, et pourtant échu depuis longtemps : il ne doit rien coûter.
+    const rendu = { ...pretType, actif: false, echeance: new Date("2026-09-01T17:00") };
+
+    expect(resumerPrets([rendu], aujourdhui))
+      .toEqual({ actifs: 0, enRetard: 0, fraisTotal: 0 });
+  });
+
+  it("compte un prêt en retard d'un jour, sans frais", () => {
+    const unJour = { ...pretType, echeance: new Date("2026-10-14T17:00") };
+
+    expect(resumerPrets([unJour], aujourdhui))
+      .toEqual({ actifs: 1, enRetard: 1, fraisTotal: 0 });
+  });
+
+  it("additionne les frais de plusieurs prêts en retard", () => {
+    const prets = [
+      pretType,                                                          // dans les temps : 0 $
+      { ...pretType, id: 2, echeance: new Date("2026-10-10T17:00") },    // 5 jours : 10 $
+      { ...pretType, id: 3, echeance: new Date("2026-09-15T17:00") },    // 30 jours : 20 $ (plafond)
+    ];
+
+    expect(resumerPrets(prets, aujourdhui))
+      .toEqual({ actifs: 3, enRetard: 2, fraisTotal: 30 });
+  });
+
+  it("ne modifie pas la liste reçue", () => {
+    // Des échéances dans le désordre : un tri de la liste serait détecté.
+    const prets = [
+      pretType,
+      { ...pretType, id: 2, echeance: new Date("2026-10-10T17:00") },
+    ];
+    const copie = structuredClone(prets);
+
+    resumerPrets(prets, aujourdhui);
+
+    expect(prets).toEqual(copie);
+  });
+});
+```
+
+**Question 3.** Un prêt rendu mais **dans les temps** ne coûterait rien de toute façon. Si `resumerPrets` oubliait de l'écarter, seul le compte des prêts actifs le révélerait. Avec une échéance dépassée depuis longtemps, l'oubli fausserait aussi le nombre de prêts en retard et le total des frais : le test détecte le bogue de trois façons.
+
+**Question 4.** 0 $, à cause du délai de grâce. Il est pourtant en retard : `enRetard` compte les jours de retard, pas les frais. Ce test vérifie justement que les deux notions restent distinctes.
+
+**Question 5.** Le prêt dans les temps ne coûte rien ; le retard de 5 jours coûte `5 × 2 = 10 $` ; celui de 30 jours atteint le plafond de 20 $. Le résumé attendu est donc `{ actifs: 3, enRetard: 2, fraisTotal: 30 }`. Calculer à la main avant d'exécuter évite de recopier dans le test le résultat que produit le code, bogues compris.
+
+**Question 6.** Avec deux prêts aux échéances dans le désordre, un tri de la liste par échéance changerait son ordre, et `toEqual` le verrait. Avec deux prêts identiques, le même tri passerait inaperçu.
+
+**Question 7.** Dans bien des équipes, oui : l'unité testée est `resumerPrets`, avec ses dépendances **pures**, rapides et sans effet extérieur. Le test reste rapide, isolé du serveur et des données, et reproductible. Si un bogue de `calculerFraisRetard` fait échouer ces tests, ceux de l'exercice 3 échouent aussi et désignent la vraie cause. Pour isoler complètement une fonction de ses dépendances, on utilise des simulacres, comme à l'exercice 7 de la page suivante.
+
+</details>
+
+<Checkpoint question="Aux exercices 3 et 5, plusieurs tests n'ajoutaient rien à la couverture. Quel critère, autre que la couverture, justifie de les garder ?">
+Chacun peut détecter une erreur que les autres laisseraient passer. Un cas limite, comme 1 jour de retard ou le plafond atteint tout juste, distingue le bon code d'une erreur de comparaison. Une donnée bien choisie, comme un prêt rendu mais échu, rend un oubli visible sur plusieurs champs du résultat. La couverture dit quelles lignes ont été exécutées ; elle ne dit pas si les valeurs essayées étaient capables de révéler un bogue.
+</Checkpoint>

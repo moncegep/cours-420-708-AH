@@ -1,402 +1,841 @@
 ---
-title: "Structurer et tester une API Express"
-description: "Organiser une API Express en couches inspirées du MVC (routes, contrôleurs, services, modèles, middlewares), suivre une ressource à travers ces couches, puis écrire des tests unitaires avec Vitest : tester un middleware contre son contrat, remplacer une dépendance par un simulacre."
+
+title: "Structurer une API Express"
+
+description: "Séparer les responsabilités dans une API Express : routes, contrôleurs, services, modèles et intergiciels. Suivre une ressource à travers ces composants, puis examiner les adaptations nécessaires pour remplacer un stockage en mémoire par PostgreSQL ou MongoDB."
+
 ---
 
+
+
 import MarginNote from "../../../components/MarginNote.astro";
+
 import Highlight from "../../../components/Highlight.astro";
+
 import Checkpoint from "../../../components/Checkpoint.astro";
 
-<MarginNote type="prerequis">
-Cette fiche prolonge [Les middlewares dans Express](/cours/04-express-2), dont elle reprend les middlewares `verifierId`, `chargerBoite`, `validerCorps` et `exigerRole`.
+import AnalyseRoute from "../../../components/react/AnalyseRoute.jsx";
+
+
+
+{/* <MarginNote type="prerequis">
+
+Cette fiche prolonge [Les middlewares dans Express](/notes/express-middlewares), dont elle reprend les middlewares `verifierId`, `chargerBoite`, `validerCorps` et `exigerRole`.
+
+</MarginNote> */}
+
+
+
+Pour une API qui comporte peu de routes, regrouper le code dans un seul fichier peut suffire. 
+À mesure que l’application grandit, les mêmes fonctions finissent toutefois par gérer plusieurs responsabilités : 
+traiter les requêtes, valider les données, appliquer les règles métier, accéder aux données et construire les réponses HTTP. 
+Les modifications deviennent plus délicates et les tests plus difficiles à réaliser séparément. 
+
+Cette page présente une façon d’**organiser une API Express** en répartissant ces responsabilités. La fiche suivante montrera comment tester ses différentes composantes.
+
+
+
+<MarginNote type="attention" titre="Pourquoi commencer sans base de données ?">
+
+Pour nous concentrer sur l’organisation du code, nous conservons d’abord les boîtes dans un **tableau en mémoire**. Les données sont donc perdues lors du redémarrage du serveur. La section 5 présente les changements à prévoir pour utiliser une base de données.
+
 </MarginNote>
 
-Tant qu'une API tient en quelques routes, un seul fichier suffit. Mais à mesure qu'elle grandit, chaque route se met à tout faire : lire la requête, valider les données, appliquer les règles du domaine, interroger la base de données, formuler la réponse. Le code devient difficile à modifier, et presque impossible à tester sans démarrer le serveur. Cette fiche montre comment **structurer** une API pour séparer ces responsabilités, puis comment cette structure permet de la **tester**.
 
-## 1. Le problème de la route qui fait tout
 
-Voici une route de création de boite écrite d'un seul tenant :
+## 1. Les limites d’une route qui gère tout
 
-```js
-app.post("/boites", async (req, res) => {
-  const { nom, capacite } = req.body ?? {};
-  if (!nom || !Number.isInteger(capacite) || capacite <= 0) {
-    return res.status(400).json({ erreur: "données invalides" });
-  }
-  const existe = await Boite.exists({ nom });
-  if (existe) return res.status(409).json({ erreur: "nom déjà utilisé" });
-  const boite = await Boite.create({ nom, capacite });
-  res.status(201).json(boite);
-});
-```
 
-Elle fonctionne. Mais quatre responsabilités s'y mêlent :
 
-1. **HTTP** : lire `req.body`, choisir un code de statut, répondre ;
-2. **validation** : vérifier la forme des données ;
-3. **règle du domaine** : deux boites ne peuvent pas porter le même nom ;
-4. **accès aux données** : interroger et écrire dans MongoDB.
+Voici une API de gestion de boîtes regroupée dans un seul fichier `index.js`. Elle permet de consulter la liste des boîtes, d’en créer, d’en consulter une et d’en supprimer une. Explorez cet exemple avant de poursuivre : chaque couleur met en évidence une responsabilité distincte, donc un aspect du code susceptible d’évoluer indépendamment des autres.
 
-Dans cette forme, tester uniquement la règle du nom unique est difficile : la même fonction dépend à la fois de HTTP et de Mongoose. 
-Il faudrait simuler plusieurs éléments qui n'ont rien à voir avec cette règle. La séparation en couches permettra de tester directement la règle du domaine.
+
+
+<AnalyseRoute client:visible />
+
+
+
+Ces quelques lignes combinent sept responsabilités. Une nouvelle règle de validation, un changement de format de réponse ou le remplacement du stockage peuvent alors nécessiter des modifications dans le même bloc de code. Il devient plus difficile d’en mesurer les conséquences.
+
+
+
+Deux autres problèmes apparaissent en explorant le filtre **Code répété** :
+
+
+
+1\. **La répétition du code.** La recherche d’une boîte et le traitement du cas où elle n’existe pas sont reproduits dans deux routes, avec `find` dans l’une et `findIndex` dans l’autre. Modifier un seul de ces traitements risque de créer des comportements incohérents.
+
+2\. **La difficulté de tester les règles séparément.** La règle qui interdit deux boîtes portant le même nom est intégrée à la route. Elle ne peut donc pas être appelée directement depuis un test sans extraire ou réorganiser le code.
+
+
 
 ## 2. Une organisation inspirée du MVC
 
+
+
 <MarginNote type="definition" titre="MVC">
-Modèle-Vue-Contrôleur : un patron d'architecture qui sépare les **données** (le modèle), leur **présentation** (la vue) et la **coordination** entre les deux (le contrôleur), qui reçoit les actions de l'utilisateur.
+
+**Modèle–Vue–Contrôleur (MVC)** : patron d’architecture qui distingue la gestion des données et des règles associées (modèle), leur présentation (vue) et le traitement des interactions (contrôleur). Les responsabilités exactes varient selon les applications et les variantes du MVC.
+
 </MarginNote>
 
-Une API s'inspire du MVC sans le reprendre tel quel. Elle n'a pas de vue au sens classique : ce qu'elle renvoie, c'est une réponse JSON, et c'est cette réponse qui joue le rôle de présentation. En pratique, la structure la plus répandue dans les projets Express découpe le code en quatre couches, auxquelles s'ajoutent les middlewares :
+
+
+Une API Express peut s’inspirer du MVC, mais elle ne possède généralement pas de vue HTML dans le serveur : elle produit notamment des réponses JSON, que d’autres applications peuvent afficher. Nous utiliserons ici une **organisation en couches**, parmi plusieurs approches possibles, avec des routes, des contrôleurs, des services et des modèles, ainsi que des intergiciels (*middlewares*) :
+
+
 
 | Couche | Dossier | Responsabilité | Connait HTTP ? |
-|---|---|---|---|
-| Routes | `routes/` | Associer une URL et un verbe à une chaine de middlewares et à un contrôleur | oui |
-| Contrôleurs | `controleurs/` | Lire la requête, appeler le service, formuler la réponse | oui |
-| Services | `services/` | Appliquer les règles du domaine | **non** |
-| Modèles | `modeles/` | Décrire les données et y accéder | **non** |
-| Middlewares | `middlewares/` | Traitements transversaux, traversés avant le contrôleur | oui |
 
-<MarginNote type="attention" titre="La couche service n'est pas dans le MVC d'origine">
-Le MVC classique ne prévoit que trois rôles. La couche **service** est un ajout courant, qui retire la logique du domaine des contrôleurs pour la rendre réutilisable et testable. D'autres découpages existent ; celui-ci est un point de départ répandu, pas une norme.
+|---|---|---|---|
+
+| Routes | `routes/` | Associer une méthode HTTP et un chemin à des intergiciels et à un contrôleur | oui |
+
+| Contrôleurs | `controleurs/` | Lire la requête, appeler le service, formuler la réponse | oui |
+
+| Services | `services/` | Appliquer les règles métier | **non** |
+
+| Modèles | `modeles/` | Gérer l’accès aux données | **non** |
+
+| Intergiciels | `intergiciels/` | Traiter les requêtes en amont des contrôleurs ou gérer les erreurs | oui |
+
+
+
+<MarginNote type="attention" titre="Une adaptation du MVC">
+
+Le MVC comporte traditionnellement trois rôles. L’ajout d’une couche **service** permet de déplacer les règles métier hors des contrôleurs pour les réutiliser et les tester plus facilement. Cette organisation est un choix de conception, et non une structure imposée par Express.
+
 </MarginNote>
+
+
 
 L'arborescence correspondante :
 
+
+
 ```text
+
 src/
-├── app.js               assemblage de l'application
-├── serveur.js           démarrage (app.listen)
+
+├── app.js               assemblage de l'application
+
+├── serveur.js           démarrage (app.listen)
+
 ├── routes/
-│   └── boites.js
+
+│   └── boites.js
+
 ├── controleurs/
-│   └── boites.js
+
+│   └── boites.js
+
 ├── services/
-│   └── boites.js
+
+│   └── boites.js
+
 ├── modeles/
-│   └── boite.js
-└── middlewares/
-    ├── boites.js        verifierId, chargerBoite
-    ├── validation.js    validerCorps
-    ├── mesure.js        mesurerDuree
-    └── erreurs.js       gererErreurs
+
+│   └── boite.js
+
+├── regles/
+
+│   ├── verifications.js petites fonctions de vérification réutilisables
+
+│   └── boite.js         règles de validation d'une boite
+
+└── intergiciels/
+
+    ├── boites.js        verifierId, chargerBoite
+
+    ├── validation.js    validerCorps
+
+    ├── mesure.js        mesurerDuree
+
+    └── erreurs.js       gererErreurs
+
 ```
 
-<Highlight>Chaque couche ne connait que celle du dessous : les routes appellent les contrôleurs, les contrôleurs appellent les services, les services appellent les modèles.</Highlight>
 
-Cette **règle de dépendance** a une conséquence concrète : un contrôleur ne touche jamais Mongoose, et un service ne touche jamais `req` ni `res`. C'est ce qui rendra chaque couche testable séparément.
+
+<Highlight>Dans cette organisation, les contrôleurs passent par les services pour accéder aux données, et les services passent par les modèles. Les routes associent les traitements HTTP aux contrôleurs et aux intergiciels.</Highlight>
+
+
+
+Nous adoptons ici une **règle de dépendance** : les contrôleurs ne consultent pas directement les modèles, et les services ne manipulent pas les objets HTTP `req` et `res`. Cette séparation permet de tester les responsabilités plus indépendamment.
+
+
 
 <MarginNote type="astuce" titre="Une structure proportionnée">
-Pour une API de trois routes, cinq dossiers peuvent sembler lourds, et une structure plus plate convient souvent. Le découpage devient rentable quand plusieurs routes partagent des règles, ou quand on veut les tester.
+
+Pour une petite API, multiplier les dossiers n’est pas toujours nécessaire. La séparation devient particulièrement utile lorsque plusieurs routes partagent des traitements ou que l’application évolue.
+
 </MarginNote>
 
-## 3. Une ressource à travers les couches
 
-Reprenons la création de boite, cette fois répartie dans les couches. On part du bas.
+
+## 3. Suivre une ressource à travers les couches
+
+
+
+Reprenons l’exemple des boîtes en répartissant le code dans les différents modules, en commençant par l’accès aux données.
+
+
 
 ### 3.1 Le modèle
 
+
+
+Dans cet exemple, le modèle regroupe les opérations d’accès aux boîtes. Il utilise un tableau, mais les services n’ont pas besoin de connaître cette représentation : ils appellent les méthodes exposées par `Boite`.
+
+
+
 ```js
+
 // modeles/boite.js
-import mongoose from "mongoose";
 
-const schema = new mongoose.Schema({
-  nom:      { type: String, required: true, unique: true },
-  capacite: { type: Number, required: true, min: 1 },
-});
+let boites = [];
 
-export const Boite = mongoose.model("Boite", schema);
+let prochainId = 1;
+
+
+
+export const Boite = {
+
+  async lister() {
+
+    return [...boites];
+
+  },
+
+
+
+  async trouverParId(id) {
+
+    return boites.find((b) => b.id === Number(id)) ?? null;
+
+  },
+
+
+
+  async existeNom(nom) {
+
+    return boites.some((b) => b.nom === nom);
+
+  },
+
+
+
+  async creer({ nom, capacite }) {
+
+    const boite = { id: prochainId++, nom, capacite };
+
+    boites.push(boite);
+
+    return boite;
+
+  },
+
+
+
+  async supprimer(id) {
+
+    const avant = boites.length;
+
+    boites = boites.filter((b) => b.id !== Number(id));
+
+    return boites.length < avant;
+
+  },
+
+
+
+  vider() {                       // utile pour les tests
+
+    boites = [];
+
+    prochainId = 1;
+
+  },
+
+};
+
 ```
+
+
+
+<MarginNote type="attention" titre="Pourquoi utiliser `async` avec un tableau ?">
+
+Les opérations sur ce tableau sont synchrones, mais les méthodes sont déclarées `async` pour retourner des promesses, comme le font généralement les appels à une base de données. Les services peuvent ainsi utiliser la même façon d’appeler le modèle après un changement de stockage. Cela ne garantit toutefois pas, à lui seul, une substitution sans modification.
+
+</MarginNote>
+
+
+
+Le tableau et le compteur ne sont pas exportés. Les autres modules ne peuvent donc pas accéder directement à ces variables : ils passent par les méthodes de `Boite`.
+
+
 
 ### 3.2 Le service
 
-Le service ne dépend pas d'Express : il ne manipule ni `req`, ni `res`, ni `next`. 
-Dans cette architecture simplifiée, les erreurs du service peuvent toutefois porter un statut HTTP 
-afin d'être transformées en réponse par le gestionnaire d'erreurs.
+
+
+Le service applique ici une règle métier : deux boîtes ne peuvent pas avoir le même nom. Il ne reçoit ni `req` ni `res`. Lorsqu’un nom est déjà utilisé, il lève une erreur que l’application traduira ensuite en réponse HTTP.
+
+
 
 ```js
+
 // services/boites.js
+
 import { Boite } from "../modeles/boite.js";
 
-export function trouverBoite(id) {
-  return Boite.findById(id);
+
+
+export function listerBoites() {
+
+  return Boite.lister();
+
 }
+
+
+
+export function trouverBoite(id) {
+
+  return Boite.trouverParId(id);
+
+}
+
+
 
 export async function creerBoite({ nom, capacite }) {
-  if (await Boite.exists({ nom })) {
-    const err = new Error("nom déjà utilisé");
-    err.status = 409;
-    throw err;
-  }
-  return Boite.create({ nom, capacite });
+
+  if (await Boite.existeNom(nom)) {
+
+    const err = new Error("nom déjà utilisé");
+
+    err.status = 409;
+
+    throw err;
+
+  }
+
+  return Boite.creer({ nom, capacite });
+
 }
+
+
+
+export function supprimerBoite(id) {
+
+  return Boite.supprimer(id);
+
+}
+
 ```
 
-L'erreur levée remonte jusqu'au middleware d'erreur vu dans la fiche précédente, qui lit `err.status` et répond `409`. En Express 5, cette remontée est automatique depuis une fonction `async`.
+
+
+En Express 5, une erreur levée dans un gestionnaire de route asynchrone, ou dans une promesse qu’il retourne, est automatiquement transmise au gestionnaire d’erreurs. Celui-ci utilise ici `err.status` pour produire une réponse HTTP 409.
+
+
+
+La vérification de l’unicité du nom est désormais centralisée dans le service. On peut la tester sans démarrer le serveur. Avec une base de données, une contrainte d’unicité reste aussi souhaitable pour éviter les conflits entre requêtes simultanées.
+
+
 
 ### 3.3 Le contrôleur
 
-Le contrôleur fait le lien entre HTTP et le service. Il est court, et c'est voulu :
+
+
+Le contrôleur reçoit les informations de la requête, appelle les services nécessaires et construit la réponse HTTP. Ses fonctions restent volontairement courtes :
+
+
 
 ```js
+
 // controleurs/boites.js
+
 import * as service from "../services/boites.js";
 
-export async function creer(req, res) {
-  const boite = await service.creerBoite(req.body);
-  res.status(201).json(boite);
+
+
+export async function lister(req, res) {
+
+  res.json(await service.listerBoites());
+
 }
+
+
+
+export async function creer(req, res) {
+
+  const boite = await service.creerBoite(req.body);
+
+  res.status(201).json(boite);
+
+}
+
+
 
 export function lire(req, res) {
-  res.json(req.boite);          // posé par chargerBoite
+
+  res.json(req.boite);          // ajoutée à req par chargerBoite
+
 }
+
+
+
+export async function supprimer(req, res) {
+
+  await service.supprimerBoite(req.boite.id);
+
+  res.status(204).end();
+
+}
+
 ```
 
-### 3.4 Les routes
 
-Les routes assemblent la chaine : middlewares d'abord, contrôleur en dernier. On utilise un `Router`, une mini-application qui regroupe les routes d'une même ressource.
+
+`lire` et `supprimer` ne vérifient pas si la boîte existe : quand ils s'exécutent, `chargerBoite` l'a déjà fait. La vérification écrite deux fois dans `index.js` n'est plus écrite qu'une fois.
+
+
+
+### 3.4 Extraire les règles de validation
+
+
+
+Dans `index.js`, les conditions de validation étaient intégrées aux routes. Nous les séparons en deux étapes pour faciliter leur lecture et leur réutilisation.
+
+
+
+D'abord, de **petites fonctions de vérification**, qui répondent par vrai ou faux à une question précise. Leur nom indique le résultat attendu, ce qui rend les conditions plus faciles à comprendre :
+
+
 
 ```js
-// routes/boites.js
-import { Router } from "express";
-import * as controleur from "../controleurs/boites.js";
-import { verifierId, chargerBoite } from "../middlewares/boites.js";
-import { validerCorps } from "../middlewares/validation.js";
 
-const reglesBoite = {
-  nom: (v) => (typeof v === "string" && v.trim() !== "" ? null : "nom requis"),
-  capacite: (v) => (Number.isInteger(v) && v > 0 ? null : "entier positif attendu"),
+// regles/verifications.js
+
+export const estTexteNonVide = (v) => typeof v === "string" && v.trim() !== "";
+
+export const estEntierPositif = (v) => Number.isInteger(v) && v > 0;
+
+
+
+export const regle = (condition, message) => (v) => (condition(v) ? null : message);
+
+```
+
+
+
+`regle` est une **fonction de fabrication** (*factory*), comme `validerCorps` et `exigerRole` dans la fiche précédente : elle reçoit une condition et un message, et retourne une règle prête à l'emploi. Cette règle renvoie `null` si la valeur convient, et le message sinon.
+
+
+
+Ensuite, les règles d'une boîte se lisent presque comme une phrase :
+
+
+
+```js
+
+// regles/boite.js
+
+import { estTexteNonVide, estEntierPositif, regle } from "./verifications.js";
+
+
+
+export const reglesBoite = {
+
+  nom: regle(estTexteNonVide, "nom requis"),
+
+  capacite: regle(estEntierPositif, "entier positif attendu"),
+
 };
+
+```
+
+
+
+Ces fonctions ne dépendent ni d'Express, ni du modèle : ce sont des **fonctions pures**, qui reçoivent une valeur et retournent un résultat sans rien modifier autour d'elles. Les vérifications sont réutilisables pour n'importe quelle ressource, et la fiche sur les tests en fera ses tout premiers sujets.
+
+
+
+### 3.5 Les routes
+
+
+
+Chaque route associe une méthode et un chemin HTTP à une suite de traitements : les intergiciels nécessaires, puis le contrôleur. `Router` permet de regrouper les routes d’une même ressource.
+
+
+
+```js
+
+// routes/boites.js
+
+import { Router } from "express";
+
+import * as controleur from "../controleurs/boites.js";
+
+import { verifierId, chargerBoite } from "../intergiciels/boites.js";
+
+import { validerCorps } from "../intergiciels/validation.js";
+
+import { reglesBoite } from "../regles/boite.js";
+
+
 
 const routes = Router();
 
+
+
+routes.get("/", controleur.lister);
+
 routes.post("/", validerCorps(reglesBoite), controleur.creer);
+
 routes.get("/:id", verifierId, chargerBoite, controleur.lire);
 
+routes.delete("/:id", verifierId, chargerBoite, controleur.supprimer);
+
+
+
 export default routes;
+
 ```
 
-### 3.5 L'assemblage
+
+
+Ces quatre déclarations résument les points d’accès de l’API. Les routes qui ciblent une boîte par son identifiant réutilisent les mêmes intergiciels, plutôt que de reproduire leur logique.
+
+
+
+### 3.6 L'assemblage
+
+
 
 ```js
+
 // app.js
+
 import express from "express";
+
 import routesBoites from "./routes/boites.js";
-import { mesurerDuree } from "./middlewares/mesure.js";
-import { gererErreurs } from "./middlewares/erreurs.js";
+
+import { mesurerDuree } from "./intergiciels/mesure.js";
+
+import { gererErreurs } from "./intergiciels/erreurs.js";
+
+
 
 export const app = express();
 
+
+
 app.use(mesurerDuree);
+
 app.use(express.json());
+
 app.use("/boites", routesBoites);
-app.use(gererErreurs);          // en dernier, comme tout middleware d'erreur
+
+app.use(gererErreurs);          // en dernier, comme tout middleware d'erreur
+
 ```
 
+
+
 ```js
+
 // serveur.js
+
 import { app } from "./app.js";
 
+
+
 app.listen(3000, () => console.log("API sur le port 3000"));
+
 ```
 
-Séparer `app.js` de `serveur.js` peut sembler superflu. Mais un test pourra ainsi importer l'application **sans démarrer de serveur** .
 
-<Checkpoint question="Un collègue ajoute un appel à Boite.find() directement dans un contrôleur, « pour aller plus vite ». Quelle règle est enfreinte, et qu'est-ce que cela change pour les tests ?">
-La règle de dépendance : un contrôleur ne doit parler qu'au service, jamais au modèle. Concrètement, pour tester ce contrôleur, il faudra désormais remplacer Mongoose lui-même, au lieu d'une simple fonction du service. Le test devient plus fragile, et la requête ne profite d'aucune règle du domaine que le service aurait appliquée.
+
+Cette séparation permet d’importer l’application dans un test sans appeler `app.listen()`. Certains tests pourront donc exercer ses composants sans démarrer un serveur réseau.
+
+
+
+<Checkpoint question="Un collègue ajoute un appel à Boite.lister() directement dans un contrôleur, « pour aller plus vite ». Quelle règle est enfreinte, et qu'est-ce que cela change ?">
+
+La règle de dépendance : un contrôleur ne doit parler qu'au service, jamais au modèle. Concrètement, la requête échappe à toute règle du domaine que le service appliquerait, et le contrôleur dépend désormais du modèle : si le modèle change, le contrôleur devra peut-être changer aussi. Tester ce contrôleur demandera aussi de remplacer le modèle, et plus seulement une fonction du service.
+
 </Checkpoint>
 
-## 4. Où vivent les middlewares
 
-Les middlewares se rangent en deux familles, qui ne se montent pas au même endroit.
 
-1. Les middlewares **transversaux** concernent toutes les requêtes : `mesurerDuree`, `express.json()`, `gererErreurs`. Ils se montent dans `app.js`.
-2. Les middlewares **liés à une ressource** ne concernent que certaines routes : `verifierId`, `chargerBoite`, `validerCorps(reglesBoite)`. Ils se montent dans le fichier de routes de la ressource.
+## 4. Où placer les intergiciels ?
 
-Un ajustement s'impose pour respecter la règle de dépendance. Dans la fiche précédente, `chargerBoite` interrogeait directement le modèle. Dans une API structurée, il passe par le service :
+
+
+Dans notre exemple, les intergiciels peuvent être regroupés selon leur portée :
+
+
+
+1\. Les intergiciels **globaux** s’appliquent à l’ensemble de l’application : `mesurerDuree`, `express.json()`, `gererErreurs`. Ils se montent dans `app.js`.
+
+2\. Les intergiciels **propres à certaines routes** réalisent des vérifications particulières : `verifierId`, `chargerBoite`, `validerCorps(reglesBoite)`. Ils sont déclarés dans le fichier de routes correspondant.
+
+
+
+Le middleware d'erreur, vu dans la fiche précédente, trouve ainsi sa place dans son propre fichier. C'est lui qui transforme en réponse l'erreur `409` levée par le service :
+
+
 
 ```js
-// middlewares/boites.js
+
+// intergiciels/erreurs.js
+
+export function gererErreurs(err, req, res, next) {
+
+  console.error(err);
+
+  const statut = err.status ?? 500;
+  res.status(statut).json({ erreur: statut === 500 ? "erreur interne du serveur" : err.message });
+
+}
+
+```
+
+
+
+Un gestionnaire d’erreurs Express doit conserver la signature à **quatre paramètres** `(err, req, res, next)`, même si `next` n’est pas utilisé dans cet exemple.
+
+
+
+Pour respecter la règle de dépendance, `chargerBoite` passe désormais par le service plutôt que d'interroger le modèle. Et `verifierId` peut réutiliser une des petites fonctions de vérification :
+
+
+
+```js
+
+// intergiciels/boites.js
+
 import * as service from "../services/boites.js";
 
+import { estEntierPositif } from "../regles/verifications.js";
+
+
+
+export function verifierId(req, res, next) {
+
+  if (!estEntierPositif(Number(req.params.id))) {
+
+    return res.status(400).json({ erreur: "identifiant invalide" });
+
+  }
+
+  next();
+
+}
+
+
+
 export async function chargerBoite(req, res, next) {
-  const boite = await service.trouverBoite(req.params.id);
-  if (!boite) return res.status(404).json({ erreur: "boite introuvable" });
-  req.boite = boite;
-  next();
+
+  const boite = await service.trouverBoite(req.params.id);
+
+  if (!boite) return res.status(404).json({ erreur: "boite introuvable" });
+
+  req.boite = boite;
+
+  next();
+
 }
+
 ```
 
-Le changement tient en une ligne, mais il compte : on verra à la section 7 qu'il rend ce middleware beaucoup plus simple à tester.
 
-## 5. Tester : quoi et pourquoi
 
-<MarginNote type="definition" titre="Test unitaire">
-Un test qui vérifie **une seule unité de code** (une fonction, un middleware), isolée du reste : sans serveur démarré, sans base de données, sans réseau. Il s'exécute en quelques millisecondes et peut être relancé à chaque modification.
+`req.params.id` est toujours une **chaîne de caractères**, même quand l'URL contient un nombre : d'où le `Number(...)` avant la vérification.
+
+
+
+Le passage par le service tient en une ligne, mais il compte : la fiche sur les tests montrera qu'il rend ce middleware beaucoup plus simple à tester.
+
+
+
+## 5. Remplacer le stockage en mémoire par une base de données
+
+Les données conservées en mémoire disparaissent lorsque le serveur redémarre. Voyons comment remplacer cette implémentation sans réécrire toute l’API.
+
+<MarginNote type="definition" titre="Interface d’un module">
+
+L’**interface** d’un module correspond aux opérations qu’il met à la disposition des autres modules, ainsi qu’aux paramètres, résultats et comportements attendus. Deux implémentations peuvent être substituées l’une à l’autre si elles respectent cette interface.
+
 </MarginNote>
 
-Un test unitaire répond à une question précise : cette fonction fait-elle ce qu'elle promet ? Son intérêt principal est de détecter une **régression**, c'est-à-dire une fonctionnalité qui marchait et qu'une modification a cassée sans qu'on s'en aperçoive.
+Les services utilisent les méthodes `lister`, `trouverParId`, `existeNom`, `creer` et `supprimer`. Une nouvelle implémentation devra conserver ces opérations, mais aussi leur comportement : valeurs retournées, gestion des identifiants et traitement des erreurs. Les exemples suivants illustrent le principe ; ils supposent que la connexion à la base, le schéma et les dépendances nécessaires ont déjà été configurés.
 
-On utilise **Vitest**, un outil de test pour JavaScript. On l'installe comme dépendance de développement :
+### 5.1 Avec une base relationnelle
 
-```bash
-npm install --save-dev vitest
-```
 
-Puis on ajoute un script au `package.json` :
 
-```json
-{
-  "scripts": {
-    "test": "vitest run"
-  }
-}
-```
+Avec PostgreSQL et la bibliothèque `pg`, chaque méthode devient une requête SQL :
 
-Vitest exécute tous les fichiers dont le nom se termine par `.test.js`. Un test s'écrit avec trois fonctions : `describe` regroupe des tests, `it` décrit un cas, et `expect` vérifie un résultat.
 
-```bash
-npm test
-```
-
-## 6. Tester un middleware contre son contrat
-
-La fiche précédente décrivait chaque middleware par un **contrat** : exactement une issue parmi `next()`, une réponse, ou `next(err)`. Ce contrat nous dit précisément quoi vérifier. Un middleware est une fonction : on l'appelle avec des `req`, `res` et `next` **factices**, puis on vérifie laquelle des issues s'est produite.
-
-`vi.fn()` crée une fonction espionne : elle ne fait rien, mais elle enregistre chacun de ses appels. On s'en sert pour fabriquer une fausse réponse :
 
 ```js
-// tests/outils.js
-import { vi } from "vitest";
 
-export function fausseReponse() {
-  const res = {};
-  res.status = vi.fn(() => res);   // retourne res, pour permettre res.status(403).json(...)
-  res.json = vi.fn(() => res);
-  return res;
-}
+// modeles/boite.js (version PostgreSQL)
+
+import { pool } from "../bd.js";
+
+
+
+export const Boite = {
+
+  async lister() {
+
+    const { rows } = await pool.query("SELECT id, nom, capacite FROM boites ORDER BY id");
+
+    return rows;
+
+  },
+
+
+
+  async trouverParId(id) {
+
+    const { rows } = await pool.query("SELECT id, nom, capacite FROM boites WHERE id = $1", [id]);
+
+    return rows[0] ?? null;
+
+  },
+
+
+
+  async existeNom(nom) {
+
+    const { rows } = await pool.query("SELECT 1 FROM boites WHERE nom = $1", [nom]);
+
+    return rows.length > 0;
+
+  },
+
+
+
+  async creer({ nom, capacite }) {
+
+    const { rows } = await pool.query(
+
+      "INSERT INTO boites (nom, capacite) VALUES ($1, $2) RETURNING id, nom, capacite",
+
+      [nom, capacite],
+
+    );
+
+    return rows[0];
+
+  },
+
+
+
+  async supprimer(id) {
+
+    const { rowCount } = await pool.query("DELETE FROM boites WHERE id = $1", [id]);
+
+    return rowCount > 0;
+
+  },
+
+};
+
 ```
 
-`exigerRole` est un bon premier sujet : il ne dépend de rien d'autre que de `req`.
 
-```js
-// tests/exigerRole.test.js
-import { describe, it, expect, vi } from "vitest";
-import { exigerRole } from "../src/middlewares/authentification.js";
-import { fausseReponse } from "./outils.js";
 
-describe("exigerRole", () => {
-  it("laisse passer un utilisateur qui détient le rôle", () => {
-    const req = { utilisateur: { roles: ["admin"] } };
-    const res = fausseReponse();
-    const next = vi.fn();
+<MarginNote type="attention" titre="Des paramètres plutôt qu'une concaténation">
 
-    exigerRole("admin")(req, res, next);
+Les valeurs passent par des paramètres (`$1`, `$2`) et non par une chaîne construite à la main comme `"WHERE nom = '" + nom + "'"`. La bibliothèque les transmet séparément de la requête, ce qui protège contre l'**injection SQL**, où une valeur malveillante modifierait la requête elle-même. Avec MySQL, seule la notation change (`?` au lieu de `$1`).
 
-    expect(next).toHaveBeenCalledOnce();
-    expect(res.status).not.toHaveBeenCalled();
-  });
-
-  it("répond 403 sans appeler next si le rôle manque", () => {
-    const req = { utilisateur: { roles: ["visiteur"] } };
-    const res = fausseReponse();
-    const next = vi.fn();
-
-    exigerRole("admin")(req, res, next);
-
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it("répond 403 si aucun utilisateur n'a été authentifié", () => {
-    const req = {};
-    const res = fausseReponse();
-    const next = vi.fn();
-
-    exigerRole("admin")(req, res, next);
-
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(next).not.toHaveBeenCalled();
-  });
-});
-```
-
-<Highlight>Chaque test vérifie l'issue attendue, et vérifie aussi que l'autre n'a pas eu lieu : c'est le « exactement une issue » du contrat.</Highlight>
-
-Le troisième test mérite qu'on s'y arrête : il reproduit le cas où `exigerRole` serait monté avant `authentifier`. Un cas limite discuté en théorie devient ainsi un comportement vérifié à chaque exécution.
-
-## 7. Remplacer une dépendance par un simulacre
-
-<MarginNote type="definition" titre="Simulacre">
-Une version factice d'une dépendance, qu'on substitue à la vraie pendant un test pour contrôler ce qu'elle répond. On parle aussi de *mock* ou de double de test.
 </MarginNote>
 
-`chargerBoite` pose un problème nouveau : il appelle `service.trouverBoite`, qui interroge la base de données. Pour le tester isolément, on remplace le service par un simulacre. `vi.mock` remplace toutes les fonctions exportées par un module par des fonctions espionnes, dont on choisit ensuite le résultat.
+
+
+Les identifiants restent des entiers générés par la base : `verifierId`, qui vérifie un entier positif, n'a pas à changer.
+
+
+
+### 5.2 Avec MongoDB
+
+
+
+Avec Mongoose, le modèle enveloppe un modèle Mongoose derrière la même interface :
+
+
 
 ```js
-// tests/chargerBoite.test.js
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { chargerBoite } from "../src/middlewares/boites.js";
-import * as service from "../src/services/boites.js";
-import { fausseReponse } from "./outils.js";
 
-vi.mock("../src/services/boites.js");
+// modeles/boite.js (version MongoDB)
 
-describe("chargerBoite", () => {
-  beforeEach(() => vi.resetAllMocks());
+import mongoose from "mongoose";
 
-  it("pose la boite sur req et appelle next", async () => {
-    const boite = { nom: "Rangement", capacite: 10 };
-    service.trouverBoite.mockResolvedValue(boite);
-    const req = { params: { id: "66a1f0c2e4b0a1b2c3d4e5f6" } };
-    const res = fausseReponse();
-    const next = vi.fn();
 
-    await chargerBoite(req, res, next);
 
-    expect(req.boite).toBe(boite);
-    expect(next).toHaveBeenCalledOnce();
-  });
+const schema = new mongoose.Schema({
 
-  it("répond 404 si la boite n'existe pas", async () => {
-    service.trouverBoite.mockResolvedValue(null);
-    const req = { params: { id: "66a1f0c2e4b0a1b2c3d4e5f6" } };
-    const res = fausseReponse();
-    const next = vi.fn();
+  nom:      { type: String, required: true, unique: true },
 
-    await chargerBoite(req, res, next);
+  capacite: { type: Number, required: true, min: 1 },
 
-    expect(res.status).toHaveBeenCalledWith(404);
-    expect(next).not.toHaveBeenCalled();
-  });
 });
+
+
+
+const BoiteMongo = mongoose.model("Boite", schema);
+
+
+
+export const Boite = {
+
+  lister: () => BoiteMongo.find(),
+
+  trouverParId: (id) => BoiteMongo.findById(id),
+
+  existeNom: async (nom) => (await BoiteMongo.exists({ nom })) !== null,
+
+  creer: (donnees) => BoiteMongo.create(donnees),
+
+  supprimer: async (id) => (await BoiteMongo.findByIdAndDelete(id)) !== null,
+
+};
+
 ```
 
-`mockResolvedValue` fixe ce que la fonction retournera : une boite dans le premier cas, `null` dans le second. Aucune base de données n'est sollicitée.
 
-<Highlight couleur="ambre">C'est ici que la structure paie : parce que `chargerBoite` parle au service et non à Mongoose, il suffit de remplacer une seule fonction.</Highlight>
 
-On teste un service de la même façon, en remplaçant cette fois le modèle. `vi.spyOn` remplace une seule méthode d'un objet, sans toucher au reste :
+Cette version MongoDB montre une limite importante : **elle ne peut pas remplacer telle quelle le modèle en mémoire**. MongoDB utilise par défaut des identifiants `ObjectId`, différents des entiers employés précédemment. Il faudrait adapter la vérification de `req.params.id` (par exemple avec `mongoose.isValidObjectId`) et s’assurer que les identifiants restent cohérents dans toute l’application.
 
-```js
-// tests/creerBoite.test.js
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { creerBoite } from "../src/services/boites.js";
-import { Boite } from "../src/modeles/boite.js";
+De plus, les résultats Mongoose ne correspondent pas nécessairement au format `{ id, nom, capacite }` attendu par l’API. Une couche de conversion dans le modèle peut préserver ce format public. Les opérations liées aux erreurs et les contraintes d’unicité doivent également être prises en compte.
 
-describe("creerBoite", () => {
-  afterEach(() => vi.restoreAllMocks());
+### 5.3 Ce qui change et ce qui reste stable
 
-  it("refuse un nom déjà utilisé avec une erreur 409", async () => {
-    vi.spyOn(Boite, "exists").mockResolvedValue(true);
+Avec PostgreSQL, les services, les contrôleurs et les routes **peuvent rester inchangés** si le schéma de la base conserve des identifiants entiers et si le nouveau modèle retourne les mêmes données. Il faut néanmoins configurer la connexion et créer les tables nécessaires.
 
-    await expect(creerBoite({ nom: "Rangement", capacite: 10 }))
-      .rejects.toMatchObject({ status: 409 });
-  });
-});
-```
+Avec MongoDB, le remplacement demande davantage de précautions : validation des identifiants, conversion éventuelle des documents et gestion des erreurs de base de données. On peut limiter les modifications aux modules d’accès aux données et aux vérifications concernées, mais ce résultat doit être conçu explicitement.
 
-Ce test vérifie la règle du nom unique, celle qui, à la section 1, exigeait un serveur et une base de données pour être éprouvée.
+<Highlight couleur="ambre">La séparation des responsabilités ne supprime pas toutes les modifications lors d’un changement de stockage. Elle permet surtout de les localiser et d’en réduire la portée.</Highlight>
 
-Les tests réalisés ici isolent volontairement une fonction ou une couche en remplaçant ses dépendances. 
-Une autre catégorie de tests cherche plutôt à vérifier que plusieurs parties de l’application fonctionnent correctement ensemble. 
-Ces tests d’intégration seront visités plus tard dans le cours.
+<MarginNote type="plusloin" titre="Et les tests ?">
+
+La méthode `vider` est propre au modèle en mémoire. Pour tester une véritable base de données, on prévoit généralement un environnement de test isolé ainsi qu’une stratégie de réinitialisation des données.
+
+</MarginNote>
+
+<Checkpoint question="On remplace le modèle en mémoire par PostgreSQL, puis par MongoDB. Quelles adaptations faut-il envisager dans chaque cas ?">
+
+Avec PostgreSQL, si l’on conserve les identifiants entiers et les mêmes formats de résultats, les principaux changements concernent le modèle, la connexion et la création des tables. Avec MongoDB, il faut également traiter le format des identifiants, la validation des paramètres et la conversion éventuelle des documents retournés. L’objectif est de préserver autant que possible l’interface utilisée par les services.
+
+</Checkpoint>
+
+## 6. Prochaine étape : tester les composants
+
+
+
+Une API ainsi organisée distingue les responsabilités et facilite leur vérification : les fonctions de validation reçoivent des valeurs, les services manipulent les données du domaine et les intergiciels traitent les requêtes HTTP. La fiche suivante, [Tester une API Express](/notes/express-tester), montre comment écrire des tests sur ces composants.

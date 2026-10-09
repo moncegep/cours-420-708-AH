@@ -1,0 +1,479 @@
+---
+title: "Introduction aux tests unitaires avec Vitest"
+description: "Découvrir les tests unitaires en JavaScript : écrire et exécuter des tests avec Vitest, choisir des cas pertinents, vérifier les résultats et les interactions, tester des middlewares Express et des fonctions asynchrones."
+---
+
+import MarginNote from "../../../components/MarginNote.astro";
+import Highlight from "../../../components/Highlight.astro";
+import Checkpoint from "../../../components/Checkpoint.astro";
+
+{/* <MarginNote type="prerequis">
+Cette fiche s'appuie sur l'API présentée dans [Structurer une API Express](/notes/express-structurer) et sur les notions de [Les middlewares dans Express](/notes/express-middlewares). Aucune expérience préalable des tests automatisés n'est nécessaire.
+</MarginNote> */}
+
+Jusqu'ici, pour vérifier qu'une route fonctionnait, vous démarriez le serveur, envoyiez une requête avec Bruno ou Postman, puis examiniez la réponse.
+
+Cette méthode est utile, mais elle demande de répéter les mêmes vérifications après chaque modification. À mesure que l'application évolue, certaines risquent d'être oubliées. Un **test automatisé** permet de confier ces vérifications à un programme et de les répéter rapidement, sans intervention manuelle.
+
+## 1. Comprendre les tests unitaires
+
+<MarginNote type="definition" titre="Test unitaire">
+Un **test unitaire** est un test automatisé qui vérifie le comportement d'une unité de code, généralement une fonction ou une méthode. Il exécute cette unité dans des conditions déterminées et vérifie qu'elle se comporte comme prévu. On cherche habituellement à l'isoler des autres composants de l'application.
+</MarginNote>
+
+Pour une fonction qui reçoit une valeur et retourne un résultat, la question est simple : **pour une entrée donnée, obtient-on le résultat attendu ?** D'autres tests vérifient plutôt qu'une erreur est produite ou qu'une autre fonction est appelée.
+
+On recherche notamment quatre qualités dans un test unitaire :
+
+1. **Rapidité** : il s'exécute assez vite pour être relancé fréquemment.
+2. **Isolation** : son résultat dépend le moins possible d'éléments externes, comme le réseau, une base de données ou d'autres services.
+3. **Reproductibilité** : dans les mêmes conditions, il produit le même résultat, indépendamment de l'ordre d'exécution des tests.
+4. **Vérification automatique** : il détermine lui-même si le comportement observé correspond au comportement attendu.
+
+<MarginNote type="definition" titre="Régression">
+Une **régression** est l'apparition d'un défaut dans une fonctionnalité qui fonctionnait auparavant, à la suite d'une modification du code.
+</MarginNote>
+
+Les tests automatisés aident notamment à détecter les **régressions**. Par exemple, après avoir modifié une règle de validation, un test qui réussissait auparavant peut échouer et signaler qu'un comportement attendu a changé.
+
+<MarginNote type="attention" titre="Ce qu'un test ne garantit pas">
+Un test vérifie uniquement les situations couvertes par les cas de test. Même si tous les tests réussissent, cela ne garantit pas que l'application est exempte d'erreurs.
+</MarginNote>
+
+## 2. Installer Vitest
+
+Nous utiliserons **Vitest**, un outil permettant d'exécuter des tests JavaScript et d'en consulter les résultats. On l'installe comme **dépendance de développement**, puisqu'il sert à vérifier le code pendant son développement et n'est pas nécessaire à l'exécution de l'API en production :
+
+```bash
+npm install --save-dev vitest
+```
+
+Dans le fichier `package.json`, on ajoute un script pour lancer les tests :
+
+```json
+{
+  "scripts": {
+    "test": "vitest run"
+  }
+}
+```
+
+Cet extrait présente uniquement la propriété `scripts` pertinente; il faut conserver les autres propriétés déjà présentes dans votre fichier.
+
+Dans notre projet, nous placerons les fichiers de test dans un dossier `tests/`, à côté de `src/`, et utiliserons des noms se terminant par `.test.js`. Vitest reconnaît cette convention de nommage.
+
+Pour exécuter les tests une seule fois :
+
+```bash
+npm test
+```
+
+<MarginNote type="astuce" titre="Exécuter les tests après chaque modification">
+La commande `npx vitest`, sans `run`, lance Vitest en **mode surveillance** (*watch mode*). Les tests concernés sont relancés lorsque les fichiers changent, ce qui est pratique pendant le développement.
+</MarginNote>
+
+## 3. Écrire un premier test
+
+### 3.1 Commencer par une fonction pure
+
+Une **fonction pure** constitue un bon point de départ, car son comportement est généralement facile à prévoir.
+
+<MarginNote type="definition" titre="Fonction pure">
+Une fonction est dite **pure** si son résultat dépend uniquement de ses arguments et si son exécution ne produit aucun effet sur l'état extérieur. Appelée avec les mêmes arguments, elle retourne toujours le même résultat.
+</MarginNote>
+
+Notre API utilise notamment ces fonctions de validation dans `src/regles/verifications.js` :
+
+```js
+// src/regles/verifications.js
+export const estTexteNonVide = (v) => typeof v === "string" && v.trim() !== "";
+export const estEntierPositif = (v) => Number.isInteger(v) && v > 0;
+
+export const regle = (condition, message) => (v) => (condition(v) ? null : message);
+```
+
+Commençons par `estEntierPositif` : la fonction reçoit une valeur et retourne un booléen (`true` ou `false`).
+
+### 3.2 Définir un cas de test
+
+```js
+// tests/verifications.test.js
+import { describe, it, expect } from "vitest";
+import { estEntierPositif } from "../src/regles/verifications.js";
+
+describe("estEntierPositif", () => {
+  it("accepte un entier positif", () => {
+    const resultat = estEntierPositif(10);
+    expect(resultat).toBe(true);
+  });
+});
+```
+
+Trois fonctions de Vitest interviennent ici :
+
+1. **`describe`** regroupe des tests liés à une même fonction ou à un même comportement.
+2. **`it`** définit un **cas de test**. Son titre indique le comportement attendu, par exemple « accepte un entier positif ».
+3. **`expect`** introduit une **assertion**, c'est-à-dire une vérification. La méthode `toBe(true)` indique que le résultat doit être exactement `true`. Ces méthodes de vérification sont appelées *matchers* dans la documentation de Vitest.
+
+### 3.3 Reconnaître un test réussi
+
+Avec `npm test`, Vitest affiche un résultat semblable à celui-ci (la présentation peut varier selon la version) :
+
+```text
+✓ tests/verifications.test.js (1 test) 2ms
+
+Test Files  1 passed (1)
+     Tests  1 passed (1)
+```
+
+Le symbole `✓` indique que le test a réussi.
+
+### 3.4 Comprendre un échec
+
+Ajoutons un second test, qui vérifie que zéro est refusé :
+
+```js
+it("refuse zéro", () => {
+  const resultat = estEntierPositif(0);
+  expect(resultat).toBe(false);
+});
+```
+
+Pour observer un échec, introduisons volontairement une erreur dans `src/regles/verifications.js` : remplaçons `v > 0` par `v >= 0`. Le test échoue alors :
+
+```text
+FAIL  tests/verifications.test.js > estEntierPositif > refuse zéro
+AssertionError: expected true to be false
+```
+
+Le message permet de repérer **le test qui a échoué**, puis **la différence entre le résultat obtenu** (`true`) **et le résultat attendu** (`false`). Rétablissons ensuite `v > 0` : le test réussit de nouveau.
+
+<Highlight>Introduire volontairement une erreur permet de vérifier qu'un test est capable de détecter un comportement incorrect. Un test qui réussit n'est pas nécessairement un test pertinent.</Highlight>
+
+## 4. Structurer un test avec AAA
+
+Une convention courante consiste à organiser les tests en trois étapes, désignées par l'acronyme **AAA**, de l'anglais *Arrange, Act, Assert* :
+
+1. **Préparer (*Arrange*)** : définir les données et les conditions nécessaires au test.
+2. **Exécuter (*Act*)** : déclencher l'opération ou le comportement à tester.
+3. **Vérifier (*Assert*)** : comparer le comportement observé avec le comportement attendu.
+
+Prenons une règle de `reglesBoite`, créée à partir de `estEntierPositif` avec la fonction `regle`. Cette règle retourne `null` si la valeur est valide, ou un message d'erreur dans le cas contraire.
+
+```js
+it("refuse zéro", () => {
+  // Préparer
+  const valeur = 0;
+
+  // Exécuter
+  const resultat = reglesBoite.capacite(valeur);
+
+  // Vérifier
+  expect(resultat).toBe("entier positif attendu");
+});
+```
+
+Dans cet exemple, la préparation est très simple. Elle sera plus importante lorsque nous devrons créer des objets représentant des requêtes et des réponses HTTP. Avec l'habitude, les commentaires peuvent être retirés; des lignes vides suffisent souvent pour séparer les trois étapes.
+
+Deux pratiques facilitent la lecture et l'entretien des tests.
+
+**Cibler un comportement par test.** Il est généralement préférable de donner à chaque test un objectif précis. Si un même test vérifie plusieurs situations et que la première assertion échoue, les suivantes ne sont pas exécutées. Il peut toutefois être nécessaire d'effectuer plusieurs opérations pour vérifier un même comportement.
+
+**Choisir un titre descriptif.** Le titre « refuse zéro » indique clairement ce qui est attendu. Un titre comme « test 2 » ou « capacite » apporte peu d'information lorsqu'un test échoue.
+
+<Checkpoint question="Un test appelle reglesBoite.capacite(0), vérifie le résultat, puis appelle reglesBoite.capacite(-5) et vérifie à nouveau, le tout dans un seul it intitulé « capacite ». Quelles améliorations proposeriez-vous ?">
+Il vaut mieux distinguer les deux cas de test, « refuse zéro » et « refuse un nombre négatif ». Si la première assertion échoue, la seconde ne sera pas exécutée. De plus, le titre « capacite » ne précise pas le comportement attendu.
+</Checkpoint>
+
+## 5. Choisir les cas et les comportements à tester
+
+Lorsqu'on conçoit des tests, deux questions se posent : **quelles situations faut-il couvrir ?** et **quels comportements doit-on vérifier ?**
+
+### 5.1 Choisir des situations représentatives
+
+Pour une même fonction, on peut notamment envisager trois catégories de situations :
+
+1. **Cas courant (ou nominal)** : une entrée habituelle pour laquelle la fonction doit se comporter normalement. Pour `capacite`, on pourrait utiliser `10`.
+2. **Cas limites** : des valeurs situées aux frontières d'une condition. Pour `capacite`, `1` est la plus petite valeur acceptée et `0` est la valeur entière immédiatement inférieure.
+3. **Cas invalides** : des valeurs qui doivent être refusées, comme un nombre négatif, un nombre décimal, une chaîne de caractères ou une valeur absente.
+
+Ces catégories ne sont pas exclusives : `0`, par exemple, représente à la fois un cas limite et une valeur invalide.
+
+| Catégorie | Valeur | Résultat attendu |
+|---|---|---|
+| Courant | `10` | `null` |
+| Limite | `1` | `null` |
+| Limite et invalide | `0` | message d'erreur |
+| Invalide | `-1` | message d'erreur |
+| Invalide | `2.5` | message d'erreur |
+| Invalide | `"10"` | message d'erreur |
+| Invalide | `undefined` | message d'erreur |
+
+Le cas `"10"` est important : une chaîne qui contient les caractères d'un nombre n'est pas une valeur numérique. Si le client transmet `"capacite": "10"` dans une requête JSON, la règle actuelle la refuse. Le test permet de documenter et de préserver ce comportement.
+
+<MarginNote type="astuce" titre="Tester plusieurs valeurs avec it.each">
+Lorsqu'on veut vérifier le même comportement pour différentes valeurs, `it.each` permet d'éviter la répétition du code :
+
+```js
+it.each([
+  [0, "entier positif attendu"],
+  [-1, "entier positif attendu"],
+  [2.5, "entier positif attendu"],
+  ["10", "entier positif attendu"],
+])("capacite(%s) retourne un message d'erreur", (valeur, attendu) => {
+  expect(reglesBoite.capacite(valeur)).toBe(attendu);
+});
+```
+
+Vitest exécute un cas de test pour chaque ligne du tableau. Le marqueur `%s` est remplacé par la valeur concernée dans le titre affiché.
+</MarginNote>
+
+<Checkpoint question="Une règle accepte une note comprise entre 0 et 100 inclusivement. Quelles valeurs choisiriez-vous pour vérifier les limites ?">
+On peut tester `-1` (refusée), `0` (acceptée), `100` (acceptée) et `101` (refusée). Ces valeurs permettent notamment de repérer des erreurs dans les opérateurs de comparaison.
+</Checkpoint>
+
+### 5.2 Déterminer le comportement à vérifier
+
+Un test peut porter sur différents aspects du comportement d'une fonction :
+
+1. **La valeur retournée.** On compare le résultat obtenu avec celui qui était attendu, comme pour les règles de `reglesBoite`.
+2. **Une erreur levée.** On vérifie que la fonction signale une situation incorrecte en levant une erreur. Nous en verrons un exemple à la section 8.
+3. **Une interaction avec une autre fonction.** On vérifie qu'un appel a été effectué avec les bons arguments, ou au contraire qu'il n'a pas eu lieu. C'est particulièrement utile pour tester les middlewares.
+
+<MarginNote type="erreur" titre="Tester une erreur avec toThrow">
+Pour vérifier qu'un appel lève une erreur, on transmet à `expect` une **fonction qui effectue cet appel**, plutôt que son résultat :
+
+```js
+expect(() => JSON.parse("pas du json")).toThrow();   // correct
+expect(JSON.parse("pas du json")).toThrow();         // incorrect
+```
+
+Dans le deuxième cas, `JSON.parse` est exécuté avant que `expect` puisse recevoir la fonction à vérifier.
+</MarginNote>
+
+## 6. Utiliser les méthodes de vérification de Vitest
+
+Vitest fournit de nombreuses méthodes de vérification (*matchers*). Voici celles qui seront utiles pour les premiers tests :
+
+| Méthode | Vérifie que… |
+|---|---|
+| `toBe(x)` | la valeur correspond exactement à `x` (comparaison avec `Object.is`) |
+| `toEqual(x)` | la valeur a le même contenu que `x` (comparaison en profondeur) |
+| `toBeNull()` | la valeur est `null` |
+| `toThrow()` | la fonction lève une erreur |
+| `toHaveBeenCalled()` | la fonction espion a été appelée |
+| `toHaveBeenCalledWith(x)` | la fonction espion a été appelée avec `x` |
+
+On peut inverser une vérification à l'aide de `.not`, par exemple : `expect(next).not.toHaveBeenCalled()`.
+
+<MarginNote type="attention" titre="toBe ou toEqual ?">
+Pour deux objets distincts ayant les mêmes propriétés, `toBe` échoue alors que `toEqual` réussit :
+
+```js
+expect({ nom: "Rangement" }).toBe({ nom: "Rangement" });    // échoue
+expect({ nom: "Rangement" }).toEqual({ nom: "Rangement" }); // réussit
+```
+
+`toBe` permet notamment de vérifier qu'il s'agit de la même référence d'objet. `toEqual` compare plutôt le contenu des objets et des tableaux.
+</MarginNote>
+
+## 7. Tester le comportement d'un middleware
+
+Dans Express, un middleware reçoit généralement `req`, `res` et `next`. Il peut notamment transmettre le traitement au middleware suivant avec `next()`, envoyer une réponse ou transmettre une erreur avec `next(err)`. Pour le tester sans démarrer le serveur, nous allons vérifier **les interactions** qui correspondent à son comportement attendu.
+
+<MarginNote type="definition" titre="Fonction espion">
+Une **fonction espion** (*spy*) enregistre les appels qu'elle reçoit et leurs arguments. Avec Vitest, `vi.fn()` permet de créer une fonction de test que l'on peut examiner après son exécution. Elle peut également être configurée pour retourner une valeur ou exécuter un comportement précis.
+</MarginNote>
+
+Nous pouvons fournir au middleware des objets `req` et `res` simplifiés, adaptés au test. Pour représenter `res`, créons un objet dont les méthodes `status` et `json` sont des fonctions espionnes :
+
+```js
+// tests/outils.js
+import { vi } from "vitest";
+
+export function fausseReponse() {
+  const res = {};
+  res.status = vi.fn(() => res); // permet l'enchaînement res.status(400).json(...)
+  res.json = vi.fn(() => res);
+  return res;
+}
+```
+
+Commençons par `validerCorps`, qui utilise les règles de validation testées précédemment :
+
+```js
+// tests/validerCorps.test.js
+import { describe, it, expect, vi } from "vitest";
+import { validerCorps } from "../src/intergiciels/validation.js";
+import { reglesBoite } from "../src/regles/boite.js";
+import { fausseReponse } from "./outils.js";
+
+describe("validerCorps", () => {
+  it("laisse passer un corps valide", () => {
+    const req = { body: { nom: "Rangement", capacite: 10 } };
+    const res = fausseReponse();
+    const next = vi.fn();
+
+    validerCorps(reglesBoite)(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("retourne une réponse 400 avec les erreurs de validation", () => {
+    const req = { body: { nom: "Rangement", capacite: 0 } };
+    const res = fausseReponse();
+    const next = vi.fn();
+
+    validerCorps(reglesBoite)(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      erreurs: [{ champ: "capacite", message: "entier positif attendu" }],
+    });
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+```
+
+On retrouve la structure AAA : **préparer** les objets `req`, `res` et `next`, **exécuter** le middleware, puis **vérifier** les appels enregistrés.
+
+<Highlight>Dans ces tests, on vérifie non seulement ce qui doit se produire, mais aussi ce qui ne doit pas se produire : un corps valide poursuit le traitement, tandis qu'un corps invalide déclenche une réponse d'erreur.</Highlight>
+
+Le middleware `exigerRole` peut être testé de la même façon. Il faut notamment prévoir le cas où aucune information d'authentification n'est présente dans `req` :
+
+```js
+// tests/exigerRole.test.js
+import { describe, it, expect, vi } from "vitest";
+import { exigerRole } from "../src/intergiciels/authentification.js";
+import { fausseReponse } from "./outils.js";
+
+describe("exigerRole", () => {
+  it("laisse passer un utilisateur qui détient le rôle", () => {
+    const req = { utilisateur: { roles: ["admin"] } };
+    const res = fausseReponse();
+    const next = vi.fn();
+
+    exigerRole("admin")(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it("retourne une réponse 403 si aucun utilisateur n'est authentifié", () => {
+    const req = {};
+    const res = fausseReponse();
+    const next = vi.fn();
+
+    exigerRole("admin")(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+```
+
+Cette seconde situation peut survenir, par exemple, si le middleware d'autorisation est exécuté avant celui qui établit l'identité de l'utilisateur. Ici, on vérifie le comportement d'`exigerRole` lorsque l'information nécessaire est absente, sans tester la configuration complète des middlewares Express.
+
+## 8. Remplacer les dépendances et tester le code asynchrone
+
+### 8.1 Remplacer une dépendance avec un mock
+
+Le middleware `chargerBoite` appelle `service.trouverBoite`, qui interroge ensuite le modèle. Si l'objectif est de tester uniquement le comportement de `chargerBoite`, on peut remplacer le module de service par une version contrôlée pendant le test.
+
+<MarginNote type="definition" titre="Mock (dépendance simulée)">
+Un **mock** est une dépendance remplacée ou simulée pour les besoins d'un test. On peut configurer les valeurs retournées et, selon le cas, vérifier les interactions avec cette dépendance. Le terme appartient à la famille des **doublures de test**.
+</MarginNote>
+
+Avec `vi.mock`, Vitest permet de remplacer un module au moment du test. Dans l'exemple suivant, `service.trouverBoite` devient une fonction dont nous pouvons définir le résultat avec `mockResolvedValue`. Cette méthode configure la valeur avec laquelle la promesse retournée sera résolue.
+
+### 8.2 Tester un middleware asynchrone
+
+`chargerBoite` est une fonction `async` : elle retourne une **promesse**. Le test doit attendre la fin de cette promesse avant d'examiner le résultat. On utilise donc `await` et on déclare le cas de test avec `async`.
+
+```js
+// tests/chargerBoite.test.js
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { chargerBoite } from "../src/intergiciels/boites.js";
+import * as service from "../src/services/boites.js";
+import { fausseReponse } from "./outils.js";
+
+vi.mock("../src/services/boites.js");
+
+describe("chargerBoite", () => {
+  beforeEach(() => vi.resetAllMocks());
+
+  it("ajoute la boîte à req et appelle next", async () => {
+    const boite = { nom: "Rangement", capacite: 10 };
+    service.trouverBoite.mockResolvedValue(boite);
+    const req = { params: { id: "1" } };
+    const res = fausseReponse();
+    const next = vi.fn();
+
+    await chargerBoite(req, res, next);
+
+    expect(req.boite).toBe(boite);
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("retourne une réponse 404 si la boîte n'existe pas", async () => {
+    service.trouverBoite.mockResolvedValue(null);
+    const req = { params: { id: "1" } };
+    const res = fausseReponse();
+    const next = vi.fn();
+
+    await chargerBoite(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+```
+
+`beforeEach` exécute une fonction avant chaque test. Ici, `vi.resetAllMocks()` réinitialise les fonctions simulées, notamment leurs appels enregistrés et leurs valeurs de retour configurées, afin d'éviter que les tests s'influencent mutuellement.
+
+<Highlight couleur="ambre">La séparation entre le middleware et le service facilite les tests : on peut contrôler le résultat de `trouverBoite` sans avoir à préparer les données du modèle.</Highlight>
+
+### 8.3 Vérifier une erreur dans une fonction asynchrone
+
+Le service `creerBoite` refuse de créer une boîte si son nom est déjà utilisé. Dans ce cas, il lève une erreur associée au statut HTTP `409`. Lorsqu'une fonction `async` lève une erreur, sa promesse est **rejetée**. Vitest permet de vérifier ce rejet avec `.rejects`.
+
+Dans cet exemple, nous utilisons le véritable modèle en mémoire. Avant chaque test, nous réinitialisons ses données avec la méthode `vider()` pour que les résultats d'un test ne dépendent pas des précédents.
+
+```js
+// tests/creerBoite.test.js
+import { describe, it, expect, beforeEach } from "vitest";
+import { creerBoite } from "../src/services/boites.js";
+import { Boite } from "../src/modeles/boite.js";
+
+describe("creerBoite", () => {
+  beforeEach(() => Boite.vider());
+
+  it("crée une boîte et lui attribue un identifiant", async () => {
+    const boite = await creerBoite({ nom: "Rangement", capacite: 10 });
+
+    expect(boite).toEqual({ id: 1, nom: "Rangement", capacite: 10 });
+  });
+
+  it("refuse un nom déjà utilisé avec une erreur 409", async () => {
+    await creerBoite({ nom: "Rangement", capacite: 10 });
+
+    await expect(creerBoite({ nom: "Rangement", capacite: 5 }))
+      .rejects.toMatchObject({ status: 409 });
+  });
+});
+```
+
+Dans le second test, la première création prépare la situation de conflit. La deuxième création constitue l'opération testée. L'assertion `.rejects.toMatchObject({ status: 409 })` vérifie que la promesse est rejetée avec une erreur possédant au moins la propriété `status` attendue.
+
+<MarginNote type="attention" titre="Pourquoi réinitialiser les données ?">
+Le modèle en mémoire conserve ses données entre les appels. Sans `vider()`, une boîte créée pendant un test pourrait modifier le résultat d'un autre test, notamment si celui-ci attend l'identifiant `1`. Les tests doivent pouvoir être exécutés indépendamment et dans un ordre différent.
+</MarginNote>
+
+<MarginNote type="plusloin" titre="Test unitaire ou test d'intégration ?">
+Ce dernier exemple sollicite à la fois le service et le modèle en mémoire. Il vérifie donc aussi leur collaboration. Selon le degré d'isolation retenu, on peut parler d'un test unitaire peu isolé ou d'un test d'intégration entre ces deux composants. Un test rapide n'est pas automatiquement un test unitaire : ce qui compte également, c'est ce qu'il met à l'épreuve.
+</MarginNote>
+
+<MarginNote type="plusloin" titre="Les différentes doublures de test">
+Une **doublure de test** remplace un composant réel pendant un test. On distingue notamment le *stub* (ou **bouchon**), qui fournit des réponses prédéfinies, l'**espion** (*spy*), qui enregistre les appels, et le **mock**, qui permet de simuler une dépendance et de vérifier certaines interactions. Les frontières entre ces termes varient selon les sources et les outils. Avec Vitest, `vi.fn()` peut remplir plusieurs de ces rôles selon sa configuration.
+</MarginNote>

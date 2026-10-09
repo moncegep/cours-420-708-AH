@@ -67,3 +67,9 @@ export function trouverTravail(id) {
 
     return { id, ...travail };
 }
+
+
+export function trouverUtilisateur(id) {
+    // TODO
+    return { };
+}

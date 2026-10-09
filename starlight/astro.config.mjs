@@ -28,16 +28,24 @@ export default defineConfig({
 						{ label: "Conception d'une API", slug: "cours/03-conception-api" },
 						{ label: "Prise en main d'Express", slug: "cours/03-express-1" },
 						{ label: "Middleware d'Express", slug: "cours/04-express-2" },
-						{ label: "Structurer et tester une API Express", slug: "cours/05-express-3" },
+						{ label: "Structurer une API Express", slug: "cours/05-express-3" },
+						{ label: "Tester une API Express", slug: "cours/06-express-4" },
 					],
 				},
 				{
 					label: 'Exercices',
 					items: [
 						{ label: "Prise en main d'Express", slug: "exercices/01-express" },
-						{ label: "Conception d'API", slug: "exercices/02-probleme" }
+						{ label: "Conception d'API", slug: "exercices/02-probleme" },
+						{ label: "Tests unitaires", slug: "exercices/03-tests" },
 					],
 				},
+				// {
+				// 	label: 'TPs',
+				// 	items: [
+				// 		{ label: "TP1 - Ogodo", slug: "tps/01-api" },
+				// 	],
+				// },
 				// {
 				// 	label: 'Reference',
 				// 	items: [{ autogenerate: { directory: 'reference' } }],

@@ -1,0 +1,478 @@
+---
+title: "TP1 : API de service en salle du restaurant Ogodo"
+description: "Concevoir et développer avec Express 5 une API de gestion du service en salle (tables, personnel, menu, commandes), décomposée en modules préparant le passage aux microservices."
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Checkpoint from '../../../components/Checkpoint.astro';
+import ServiceSalle from '../../../components/react/ServiceSalle.tsx';
+
+<Aside type="note" title="En bref">
+- **Pondération** : 30 % de la note finale
+- **Durée** : 2 semaines
+- **Travail** : individuel
+- **Remise** : [date à confirmer], par le dépôt Git
+</Aside>
+
+## Mise en situation
+
+**Ogodo** est un restaurant de quartier de six tables. Jusqu'ici, le service se coordonne sur papier : les serveurs notent les commandes sur un carnet, la cuisine les reçoit sur des billets, et l'addition se calcule à la main. Les erreurs sont fréquentes : une commande modifiée par la mauvaise personne, un plat servi avant d'être prêt, une table libérée alors qu'elle n'a pas encore payé.
+
+Ogodo souhaite remplacer ce fonctionnement par une **API** (interface de programmation applicative : un ensemble de points d'accès par lesquels des applications échangent des données) que les tablettes des serveurs et l'écran de la cuisine pourront interroger.
+
+Tu développes cette API. Elle doit gérer les tables, le personnel, le menu et surtout les commandes, en faisant respecter les règles du service.
+
+## Le service en action
+
+L'animation ci-dessous montre le comportement attendu de ton API. Chaque déplacement du personnel est un geste physique ; chaque pastille qui voyage vers l'API est une **requête HTTP**, et la pastille qui revient est la **réponse**, avec son code de statut.
+
+<ServiceSalle client:visible />
+
+En observant les scénarios, porte attention aux points suivants :
+
+1. **Qui envoie la requête.** Un serveur ou la cuisine. L'en-tête `X-Staff-Id` (visible dans le journal) indique à l'API qui fait la demande.
+2. **Quand les données changent.** Une table ou une commande ne change d'état qu'après une réponse de la famille 2xx. Un refus laisse les données intactes.
+3. **Ce qui distingue les refus.** Une requête mal formée (400), une action interdite pour cette personne (403) et une action incompatible avec l'état actuel (409) sont trois situations différentes.
+4. **Ce que contient le journal.** Chaque ligne du journal pourrait devenir un test de ton API : une requête précise, une réponse attendue.
+
+## Objectifs
+
+Au terme de ce TP, tu devrais être en mesure de :
+
+1. Concevoir une API REST à partir de règles métier et respecter un contrat de points d'accès.
+2. Organiser une application Express en modules indépendants et en couches aux responsabilités distinctes.
+3. Valider les données reçues et signaler les erreurs avec des codes de statut et un format uniformes.
+4. Faire respecter un cycle de vie (une suite d'états permis) sur une ressource.
+5. Tester les services et les points d'accès avec Vitest.
+6. Suivre l'évolution de ton travail avec Git.
+
+## Contraintes techniques
+
+- **Node.js** 20 ou plus récent, **Express 5**, modules ES (`"type": "module"` dans `package.json`).
+- **Persistance en mémoire** : les données vivent dans des structures JavaScript et sont réinitialisées au redémarrage. Une version PostgreSQL est proposée en bonus.
+- **Un seul service** Express, mais **découpé en modules** (voir l'architecture ci-dessous).
+- **Tests** avec **Vitest** et **supertest**. Supertest est une bibliothèque qui envoie des requêtes HTTP à ton application Express sans démarrer de vrai serveur réseau.
+- **Git** du début à la fin.
+- Une **collection Bruno ou Postman** exportée dans le dépôt.
+- Identifiants de code, routes et noms de champs JSON **en anglais** ; messages d'erreur destinés aux humains **en français**.
+
+## Architecture attendue
+
+### Un service, plusieurs modules
+
+L'API reste un seul service, mais elle est organisée en **modules**, un par domaine : `staff` (personnel), `tables`, `menu` et `orders` (commandes). Chaque module regroupe tout ce qui concerne son domaine.
+
+À l'intérieur d'un module, le code est réparti en quatre **couches**, chacune avec une seule responsabilité :
+
+| Couche | Fichier | Responsabilité |
+|---|---|---|
+| Routes | `*.routes.js` | Associer verbes et chemins aux fonctions du contrôleur. |
+| Contrôleur | `*.controller.js` | Lire la requête (paramètres, corps, en-têtes), appeler le service, formuler la réponse HTTP. |
+| Service | `*.service.js` | Appliquer les règles métier : validation, droits, transitions, calculs. Ne connaît rien de HTTP. |
+| Dépôt | `*.repository.js` | Lire et écrire les données. C'est la seule couche qui sait *où* elles sont stockées. |
+
+Un **dépôt** (en anglais *repository*) est ici un objet qui offre des fonctions comme `findById`, `findAll`, `create`, `update`, et qui cache la manière dont les données sont réellement conservées.
+
+### Les règles de frontière
+
+Ces règles sont au cœur de l'évaluation de l'architecture.
+
+1. Un module n'accède **jamais** au dépôt d'un autre module. Si le service des commandes a besoin d'une table, il passe par le **service** des tables.
+2. Les services ne manipulent ni `req` ni `res`. Ils reçoivent des valeurs et retournent des valeurs, ou lèvent une erreur.
+3. Les fonctions des dépôts sont **asynchrones** (elles retournent des promesses), même en mémoire. Remplacer plus tard la mémoire par une base de données ne demandera alors aucune modification des services.
+
+<Aside type="tip" title="Pourquoi cette découpe ?">
+Dans un cours à venir, ces modules pourraient devenir des services séparés : un service de salle (tables et personnel), un service de menu et un service de commandes. Si les frontières sont respectées dès maintenant, cette séparation consiste surtout à remplacer des appels de fonctions entre modules par des appels HTTP entre services. Si elles ne le sont pas, il faut souvent tout réorganiser.
+</Aside>
+
+### Arborescence suggérée
+
+```
+ogodo-api/
+  package.json
+  .gitignore
+  README.md
+  requests/                  collection Bruno ou Postman exportée
+  src/
+    app.js                   createApp() : construit et retourne l'application
+    server.js                démarre l'écoute sur un port
+    shared/
+      http-error.js          classe HttpError
+      error-handler.js       middleware d'erreurs centralisé
+      staff-identity.js      middleware qui lit X-Staff-Id
+    data/
+      seed.js                données initiales
+    modules/
+      staff/
+      tables/
+      menu/
+      orders/
+        orders.routes.js
+        orders.controller.js
+        orders.service.js
+        orders.repository.js
+  tests/
+    services/
+    endpoints/
+```
+
+### Séparer `app.js` et `server.js`
+
+`app.js` exporte une fonction `createApp()` qui construit l'application (middlewares, routes, gestion des erreurs) **sans** appeler `listen`. `server.js` l'importe et démarre l'écoute. Cette séparation permet aux tests de créer une application neuve pour chaque test, sans port réseau.
+
+`createApp()` accepte en option les dépôts à utiliser. C'est une forme d'**injection de dépendances** : plutôt que de créer elle-même ses dépôts, l'application reçoit ceux qu'on lui fournit. Les tests peuvent ainsi partir de données fraîches à chaque fois.
+
+```js
+// src/app.js (extrait)
+export function createApp({ repositories = createMemoryRepositories() } = {}) {
+  const app = express();
+  app.use(express.json());
+  // ... construire les services à partir des dépôts, puis monter les routes
+  app.use(errorHandler);
+  return app;
+}
+```
+
+<Aside type="note" title="Express 5 et les erreurs asynchrones">
+Avec Express 5, une erreur levée dans un gestionnaire `async` est dans bien des cas transmise automatiquement au middleware d'erreurs. Avec Express 4, il fallait souvent l'attraper soi-même et appeler `next(err)`. Tu peux donc laisser tes services lever des `HttpError` et les laisser remonter.
+</Aside>
+
+## Modèle de données
+
+Les noms de champs sont imposés : ils font partie du contrat.
+
+**StaffMember** (membre du personnel)
+
+| Champ | Type | Remarque |
+|---|---|---|
+| `id` | entier | généré par l'API |
+| `name` | chaîne | non vide |
+| `role` | `"server"` ou `"kitchen"` | serveur ou cuisine |
+
+**Table**
+
+| Champ | Type | Remarque |
+|---|---|---|
+| `id` | entier | généré par l'API |
+| `number` | entier | numéro affiché, unique |
+| `seats` | entier | nombre de places, de 1 à 12 |
+| `status` | `"free"` ou `"occupied"` | libre ou occupée |
+| `serverId` | entier ou `null` | serveur assigné quand la table est occupée |
+| `guests` | entier | nombre de clients installés, 0 si libre |
+
+**MenuItem** (item du menu)
+
+| Champ | Type | Remarque |
+|---|---|---|
+| `id` | entier | généré par l'API |
+| `name` | chaîne | non vide |
+| `category` | `"starter"`, `"main"`, `"dessert"` ou `"drink"` | |
+| `priceCents` | entier | prix en cents, strictement positif |
+| `available` | booléen | `false` si l'item ne peut pas être commandé |
+
+**Order** (commande)
+
+| Champ | Type | Remarque |
+|---|---|---|
+| `id` | entier | généré par l'API |
+| `tableId` | entier | |
+| `serverId` | entier | serveur assigné à la table au moment de la commande |
+| `status` | voir le cycle de vie | |
+| `items` | tableau | lignes de la commande (voir ci-dessous) |
+| `history` | tableau | historique des changements de statut |
+| `createdAt` | chaîne ISO 8601 | |
+
+Une ligne de commande contient `menuItemId`, `name`, `quantity`, `unitPriceCents` et, au besoin, `note`. Une entrée d'historique contient `status`, `at` (date et heure) et `byStaffId`.
+
+<Aside type="tip" title="Pourquoi des cents ?">
+Les nombres à virgule de JavaScript ne représentent pas exactement certains montants (essaie `0.1 + 0.2` dans la console). Stocker les prix en **cents entiers** évite ces erreurs d'arrondi. Le format **ISO 8601** est une norme d'écriture des dates, par exemple `2026-10-15T18:02:00Z` ; `new Date().toISOString()` la produit directement.
+</Aside>
+
+### Données initiales
+
+Au démarrage, l'API contient les données suivantes (fichier `src/data/seed.js`). Les tests peuvent fournir leurs propres données.
+
+```js
+export const seed = {
+  staff: [
+    { id: 1, name: 'Léa', role: 'server' },
+    { id: 2, name: 'Sam', role: 'server' },
+    { id: 3, name: 'Marc', role: 'kitchen' },
+  ],
+  tables: [1, 2, 3, 4, 5, 6].map((n) => ({
+    id: n, number: n, seats: 4, status: 'free', serverId: null, guests: 0,
+  })),
+  menuItems: [
+    { id: 1, name: "Soupe à l'oignon", category: 'starter', priceCents: 950, available: true },
+    { id: 2, name: 'Tourtière', category: 'main', priceCents: 2200, available: true },
+    { id: 3, name: 'Poutine', category: 'main', priceCents: 1600, available: true },
+    { id: 4, name: 'Pouding chômeur', category: 'dessert', priceCents: 900, available: true },
+    { id: 5, name: 'Limonade maison', category: 'drink', priceCents: 500, available: true },
+    { id: 6, name: 'Pâté chinois', category: 'main', priceCents: 1900, available: false },
+  ],
+};
+```
+
+## Identifier le personnel
+
+Les actions du service (installer des clients, commander, changer un statut, libérer une table) exigent de savoir **qui** fait la demande. Au TP1, cette identification se fait par un en-tête HTTP :
+
+```
+X-Staff-Id: 1
+```
+
+Un middleware partagé lit cet en-tête et retrouve le membre du personnel correspondant. Si l'en-tête est absent, n'est pas un entier, ou ne correspond à aucun membre, l'API répond **401**.
+
+<Aside type="caution" title="Ce n'est pas de l'authentification">
+N'importe qui peut écrire `X-Staff-Id: 1` dans une requête. Cet en-tête sert à **identifier** l'auteur d'une action, pas à **prouver** son identité. L'authentification véritable (jetons, mots de passe) sera abordée plus tard. Les routes de gestion (personnel, tables, menu) n'exigent pas cet en-tête au TP1.
+</Aside>
+
+## Contrat de l'API
+
+Les codes indiqués sont ceux que ton API doit pouvoir produire pour chaque route. Le corps des réponses de succès est la ressource concernée, sauf mention contraire.
+
+### Module `staff`
+
+| Verbe | Chemin | Description | Codes |
+|---|---|---|---|
+| GET | `/staff` | Liste du personnel | 200 |
+| GET | `/staff/:id` | Un membre du personnel | 200, 404 |
+| POST | `/staff` | Ajouter un membre (`name`, `role`) | 201, 400 |
+
+### Module `tables`
+
+| Verbe | Chemin | Description | Codes |
+|---|---|---|---|
+| GET | `/tables` | Liste, filtrable par `?status=free` ou `?status=occupied` | 200, 400 |
+| GET | `/tables/:id` | Une table | 200, 404 |
+| POST | `/tables` | Ajouter une table (`number`, `seats`) | 201, 400, 409 |
+| PUT | `/tables/:id` | Remplacer `number` et `seats` | 200, 400, 404, 409 |
+| DELETE | `/tables/:id` | Supprimer une table libre | 204, 404, 409 |
+| POST | `/tables/:id/seat` | Installer des clients (`guests`) ; le demandeur devient le serveur assigné | 200, 400, 401, 403, 404, 409 |
+| POST | `/tables/:id/release` | Libérer la table | 200, 401, 403, 404, 409 |
+
+### Module `menu`
+
+| Verbe | Chemin | Description | Codes |
+|---|---|---|---|
+| GET | `/menu-items` | Liste, filtrable par `?category=` | 200, 400 |
+| GET | `/menu-items/:id` | Un item | 200, 404 |
+| POST | `/menu-items` | Ajouter un item | 201, 400 |
+| PUT | `/menu-items/:id` | Remplacer un item | 200, 400, 404 |
+| DELETE | `/menu-items/:id` | Supprimer un item | 204, 404 |
+
+### Module `orders`
+
+| Verbe | Chemin | Description | Codes |
+|---|---|---|---|
+| GET | `/orders` | Liste, filtrable par `?status=` et `?tableId=` | 200, 400 |
+| GET | `/orders/:id` | Une commande, avec son historique | 200, 404 |
+| POST | `/orders` | Créer une commande (`tableId`, `items`) | 201, 400, 401, 403, 404, 409 |
+| PUT | `/orders/:id/items` | Remplacer les lignes d'une commande (`items`) | 200, 400, 401, 403, 404, 409 |
+| PATCH | `/orders/:id/status` | Changer le statut (`status`) | 200, 400, 401, 403, 404, 409 |
+| GET | `/orders/:id/bill` | Calculer l'addition | 200, 404, 409 |
+
+## Cycle de vie d'une commande
+
+Une commande passe par une suite d'états. Seules les transitions du tableau sont permises.
+
+| De | Vers | Qui peut la demander |
+|---|---|---|
+| `placed` (prise) | `in_kitchen` (en cuisine) | le serveur assigné |
+| `placed` (prise) | `cancelled` (annulée) | le serveur assigné |
+| `in_kitchen` (en cuisine) | `ready` (prête) | un membre de la cuisine |
+| `ready` (prête) | `served` (servie) | le serveur assigné |
+| `served` (servie) | `paid` (payée) | le serveur assigné |
+
+`paid` et `cancelled` sont des **états finaux** : aucune transition n'en part. Une commande est dite **active** tant qu'elle n'est pas dans un état final.
+
+Toute transition absente du tableau répond **409**, avec le statut actuel et les statuts permis :
+
+```json
+{
+  "error": {
+    "code": "INVALID_TRANSITION",
+    "message": "Impossible de passer de in_kitchen à served.",
+    "details": { "currentStatus": "in_kitchen", "allowed": ["ready"] }
+  }
+}
+```
+
+Chaque création et chaque transition réussie ajoute une entrée à `history`. L'historique n'est jamais modifié ni effacé : il garde la trace de *qui* a fait *quoi* et *quand*.
+
+## Règles métier
+
+**Tables**
+
+1. Le numéro (`number`) d'une table est unique : un doublon répond 409.
+2. Installer des clients exige un membre de rôle `server` (sinon 403), une table libre (sinon 409) et un nombre de clients entier entre 1 et le nombre de places (sinon 400).
+3. Seul le serveur assigné peut libérer une table (sinon 403). Une table qui a encore une commande active ne peut pas être libérée (409).
+4. Une table occupée ne peut pas être supprimée (409).
+
+**Commandes**
+
+5. Seul le serveur assigné à la table peut y créer une commande (sinon 403). La table doit être occupée (sinon 409).
+6. Une commande contient de 1 à 20 lignes. Chaque ligne référence un item existant et disponible, avec une quantité entière de 1 à 20 et une note facultative d'au plus 200 caractères.
+7. Le nom et le prix de l'item sont **copiés** dans la ligne au moment de la commande. Un changement de prix au menu ne modifie pas une commande existante.
+8. Les lignes d'une commande ne peuvent être remplacées que par le serveur assigné (sinon 403), et seulement au statut `placed` (sinon 409).
+9. Une table peut avoir plusieurs commandes (par exemple une seconde commande pour les desserts).
+
+### Ordre des vérifications
+
+Quand plusieurs problèmes sont présents, l'API signale le premier dans cet ordre : identification (401), existence de la ressource (404), validité des données (400), droit d'agir (403), compatibilité avec l'état actuel (409). Pour une transition, le droit d'agir dépend du statut demandé : demander `ready` exige un membre de la cuisine, tout autre statut exige le serveur assigné.
+
+Par exemple, si Léa demande `served` pour sa commande encore `in_kitchen`, elle a le droit d'agir mais la transition est invalide : 409. Si Marc demande `served`, il n'a pas le droit d'agir : 403.
+
+## Erreurs
+
+Toutes les erreurs suivent le même format. `details` est facultatif.
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "La commande est invalide.",
+    "details": [
+      { "field": "items[0].menuItemId", "message": "L'item 99 n'existe pas au menu." },
+      { "field": "items[1].quantity", "message": "La quantité doit être un entier entre 1 et 20." }
+    ]
+  }
+}
+```
+
+| Code HTTP | `error.code` | Situation |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | données invalides ; `details` liste **toutes** les erreurs trouvées |
+| 401 | `UNAUTHENTICATED` | `X-Staff-Id` absent ou inconnu |
+| 403 | `FORBIDDEN` | la personne identifiée n'a pas le droit de faire cette action |
+| 404 | `NOT_FOUND` | la ressource n'existe pas |
+| 409 | `CONFLICT` ou `INVALID_TRANSITION` | la demande est incompatible avec l'état actuel |
+| 500 | `INTERNAL_ERROR` | erreur imprévue ; le message ne révèle aucun détail interne |
+
+Les services lèvent des instances d'une classe `HttpError` (avec un statut, un code et un message). Un **middleware d'erreurs centralisé** les convertit en réponse JSON. Aucun contrôleur ne construit lui-même une réponse d'erreur.
+
+## Addition et taxes
+
+`GET /orders/:id/bill` calcule l'addition d'une commande servie ou payée (sinon 409) :
+
+- `subtotalCents` : somme de `quantity × unitPriceCents` sur toutes les lignes ;
+- `tpsCents` : 5 % du sous-total ;
+- `tvqCents` : 9,975 % du sous-total ;
+- `totalCents` : sous-total + TPS + TVQ.
+
+Chaque taxe est arrondie au cent le plus proche (`Math.round`). Exemple, pour deux tourtières et une poutine :
+
+```json
+{ "orderId": 12, "subtotalCents": 6000, "tpsCents": 300, "tvqCents": 599, "totalCents": 6899 }
+```
+
+La TVQ vaut ici 598,5 cents, arrondis à 599. Ce cas d'arrondi mérite un test.
+
+## Tests attendus
+
+Les tests s'exécutent avec `npm test` (script `vitest run`). Chaque test part de données fraîches : construis une nouvelle application ou de nouveaux dépôts dans un `beforeEach`.
+
+**Tests des services** (tests unitaires : on appelle directement les fonctions du service, sans HTTP)
+
+1. Chaque transition permise du cycle de vie.
+2. Au moins trois transitions interdites, qui lèvent une erreur 409.
+3. Les refus de droit : un autre serveur, et la cuisine qui tente une transition réservée au serveur.
+4. La validation d'une commande, dont au moins un cas avec plusieurs erreurs simultanées.
+5. Le calcul de l'addition, incluant le cas d'arrondi ci-dessus.
+6. Le refus de libérer une table qui a une commande active.
+
+**Tests des points d'accès** (avec supertest : on envoie de vraies requêtes HTTP à l'application)
+
+7. Au moins un test pour chaque code utilisé : 200, 201, 204, 400, 401, 403, 404 et 409, en vérifiant aussi le format du corps d'erreur.
+8. Un scénario complet, comme dans l'animation : installer, commander, envoyer en cuisine, marquer prête, servir, calculer l'addition, payer, libérer.
+
+```js
+// tests/endpoints/orders.test.js (extrait)
+import request from 'supertest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { createApp } from '../../src/app.js';
+
+describe('PATCH /orders/:id/status', () => {
+  let app;
+  beforeEach(() => {
+    app = createApp();
+  });
+
+  it('refuse de servir une commande encore en cuisine (409)', async () => {
+    // ... installer la table 4 et créer une commande envoyée en cuisine
+    const res = await request(app)
+      .patch('/orders/1/status')
+      .set('X-Staff-Id', '1')
+      .send({ status: 'served' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('INVALID_TRANSITION');
+  });
+});
+```
+
+## Git, README et collection
+
+- Crée le dépôt **dès le premier jour**. Le `.gitignore` exclut au minimum `node_modules/` et `.env`.
+- Fais des commits réguliers avec des messages explicites. Dans bien des cas, un commit par fonctionnalité ou par correctif est un bon rythme. L'historique doit montrer la progression du travail, pas un seul commit final.
+- Le `README.md` explique comment installer, lancer (`npm start`, `npm run dev`) et tester le projet, puis résume en quelques lignes tes choix d'architecture.
+- Le dossier `requests/` contient ta collection Bruno ou Postman. Elle couvre le scénario complet et au moins un refus de chaque type (400, 401, 403, 404, 409).
+
+<Aside type="tip" title="Relancer automatiquement">
+Le script `"dev": "node --watch src/server.js"` redémarre le serveur à chaque modification de fichier. Rappelle-toi que les données en mémoire repartent alors de zéro.
+</Aside>
+
+## Bonus : PostgreSQL avec Supabase
+
+Remplace la persistance en mémoire par une base PostgreSQL hébergée sur **Supabase** (une plateforme qui fournit une base PostgreSQL en ligne).
+
+- Écris le schéma SQL dans `db/schema.sql` (tables du personnel, des tables du restaurant, du menu, des commandes, des lignes de commande et de l'historique).
+- Écris de nouveaux dépôts (par exemple `orders.repository.postgres.js`) qui offrent **exactement les mêmes fonctions** que les dépôts en mémoire. Tu peux utiliser `@supabase/supabase-js` ou `pg`.
+- Choisis le stockage par une variable d'environnement, par exemple `STORAGE=memory` ou `STORAGE=postgres`.
+- Les informations de connexion restent dans `.env`, jamais dans Git. Fournis plutôt un `.env.example` sans secret.
+- Les tests continuent de s'exécuter sur les dépôts en mémoire.
+
+Le critère principal du bonus : **aucun service n'est modifié** pour passer d'un stockage à l'autre. C'est la démonstration que les frontières de ton architecture tiennent.
+
+## Jalons suggérés
+
+**Semaine 1**
+
+1. Dépôt Git, squelette de l'arborescence, `createApp`, `HttpError` et middleware d'erreurs.
+2. Modules `staff`, `menu` et `tables` (CRUD, installation et libération), avec leurs tests.
+3. Middleware d'identification `X-Staff-Id`.
+4. Début de la collection Bruno ou Postman.
+
+**Semaine 2**
+
+5. Module `orders` : création, validation, modification des lignes, cycle de vie, historique.
+6. Addition et taxes.
+7. Tests des services et des points d'accès, scénario complet.
+8. README, collection finale, et bonus si le temps le permet.
+
+<Checkpoint title="Avant de remettre">
+- `npm install` puis `npm test` fonctionnent sur une copie fraîche du dépôt, et tous les tests passent.
+- Aucun module n'importe le dépôt d'un autre module.
+- Aucun service n'utilise `req` ou `res`.
+- Toutes les erreurs suivent le même format JSON.
+- Le scénario complet de l'animation se rejoue avec ta collection, dans l'ordre, avec les mêmes codes de statut.
+- `node_modules/` et `.env` ne sont pas dans le dépôt.
+- L'historique Git montre plusieurs étapes de travail.
+</Checkpoint>
+
+## Remise
+
+Remets le lien de ton dépôt Git selon les modalités annoncées en classe. L'état évalué est le dernier commit poussé avant l'échéance.
+
+{/*
+## Grille d'évaluation (sur 100, pondération 30 %)
+
+| Critère | Points |
+|---|---|
+| Architecture : modules par domaine, couches distinctes, règles de frontière, createApp et injection des dépôts | 25 |
+| Conformité au contrat et règles métier : routes, cycle de vie, historique, droits, addition | 30 |
+| Validation et erreurs : format uniforme, codes justes, ordre des vérifications, erreurs multiples en 400 | 15 |
+| Tests Vitest : services et points d'accès, isolation des tests, scénario complet | 20 |
+| Git, README et collection Bruno ou Postman | 10 |
+| Bonus PostgreSQL (Supabase) sans modification des services | jusqu'à +10, note plafonnée à 100 |
+*/}
