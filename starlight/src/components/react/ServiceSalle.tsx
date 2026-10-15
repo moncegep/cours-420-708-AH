@@ -8,8 +8,7 @@ import './ServiceSalle.css';
 type Point = { x: number; y: number };
 type ActorId = 'lea' | 'sam' | 'marc';
 type TableId = 1 | 2 | 3 | 4 | 5 | 6;
-type OrderStatus = 'placed' | 'in_kitchen' | 'ready' | 'served' | 'paid' | 'cancelled';
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 interface ActorInfo {
   name: string;
@@ -24,14 +23,12 @@ interface TableState {
   guests: number;
   waiting: number;
   orderId: number | null;
-  orderStatus: OrderStatus | null;
   plate: boolean;
 }
 
 interface Ticket {
   orderId: number;
   tableId: TableId;
-  status: OrderStatus;
 }
 
 interface World {
@@ -40,6 +37,7 @@ interface World {
   tables: Record<TableId, TableState>;
   passePlate: boolean;
   tickets: Ticket[];
+  orderCount: number;
 }
 
 interface HttpRequest {
@@ -109,7 +107,11 @@ const TABLES: Record<TableId, Point> = {
   6: { x: 410, y: 375 },
 };
 
-const near = (id: TableId): Point => ({ x: TABLES[id].x + 58, y: TABLES[id].y + 4 });
+/** Position d'un membre du personnel à côté d'une table (à droite ou à gauche). */
+const near = (id: TableId, side: 'right' | 'left' = 'right'): Point => ({
+  x: TABLES[id].x + (side === 'right' ? 58 : -58),
+  y: TABLES[id].y + 4,
+});
 
 const HOME: Record<ActorId, Point> = {
   lea: { x: 440, y: 457 },
@@ -120,15 +122,6 @@ const HOME: Record<ActorId, Point> = {
 const PASSE: Point = { x: 270, y: 148 };
 const API_ANCHOR: Point = { x: 572, y: 255 };
 
-const STATUS_LABEL: Record<OrderStatus, string> = {
-  placed: 'prise',
-  in_kitchen: 'en cuisine',
-  ready: 'prête',
-  served: 'servie',
-  paid: 'payée',
-  cancelled: 'annulée',
-};
-
 const STATUS_TEXT: Record<number, string> = {
   200: 'OK',
   201: 'Created',
@@ -137,14 +130,12 @@ const STATUS_TEXT: Record<number, string> = {
   401: 'Unauthorized',
   403: 'Forbidden',
   404: 'Not Found',
-  409: 'Conflict',
 };
 
 const METHOD_COLOR: Record<HttpMethod, string> = {
   GET: '#2563eb',
   POST: '#0891b2',
   PUT: '#b45309',
-  PATCH: '#7c3aed',
   DELETE: '#dc2626',
 };
 
@@ -164,7 +155,6 @@ const freeTable = (): TableState => ({
   guests: 0,
   waiting: 0,
   orderId: null,
-  orderStatus: null,
   plate: false,
 });
 
@@ -178,7 +168,7 @@ const setActor = (w: World, id: ActorId, patch: { carrying?: boolean }): World =
   carrying: { ...w.carrying, [id]: patch.carrying ?? w.carrying[id] },
 });
 
-const upsertTicket = (w: World, ticket: Ticket): World => ({
+const addTicket = (w: World, ticket: Ticket): World => ({
   ...w,
   tickets: [...w.tickets.filter((t) => t.orderId !== ticket.orderId), ticket],
 });
@@ -188,7 +178,13 @@ const removeTicket = (w: World, orderId: number): World => ({
   tickets: w.tickets.filter((t) => t.orderId !== orderId),
 });
 
-/** Salle de base : Sam sert déjà la table 2 (commande 11 servie). */
+/** Enregistre une nouvelle commande dans le dépôt et l'associe à la table. */
+const recordOrder = (w: World, tableId: TableId, orderId: number): World => ({
+  ...setTable(w, tableId, { orderId }),
+  orderCount: w.orderCount + 1,
+});
+
+/** Salle de base : Sam sert déjà la table 2 (commande 11). */
 const baseWorld = (): World => {
   const tables = {} as Record<TableId, TableState>;
   for (const id of TABLE_IDS) tables[id] = freeTable();
@@ -198,7 +194,6 @@ const baseWorld = (): World => {
     guests: 2,
     waiting: 0,
     orderId: 11,
-    orderStatus: 'served',
     plate: true,
   };
   return {
@@ -207,6 +202,7 @@ const baseWorld = (): World => {
     tables,
     passePlate: false,
     tickets: [],
+    orderCount: 1,
   };
 };
 
@@ -219,13 +215,17 @@ const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() 
 /* Données de réponse réutilisées                                      */
 /* ------------------------------------------------------------------ */
 
-const ORDER_12_ITEMS = [
-  { menuItemId: 2, name: 'Tourtière', quantity: 2, unitPriceCents: 2200 },
-  { menuItemId: 3, name: 'Poutine', quantity: 1, unitPriceCents: 1600, note: 'sans oignons' },
+const CREATED_AT = '2026-10-15T18:02:00Z';
+
+const ORDER_12_FIRST = [
+  { menuItemId: 2, name: 'Tourtière', quantity: 1, unitPriceCents: 2200 },
+  { menuItemId: 3, name: 'Poutine', quantity: 1, unitPriceCents: 1600 },
 ];
 
-const history12 = (...entries: [OrderStatus, string, number][]) =>
-  entries.map(([status, at, byStaffId]) => ({ status, at, byStaffId }));
+const ORDER_12_FINAL = [
+  { menuItemId: 2, name: 'Tourtière', quantity: 2, unitPriceCents: 2200 },
+  { menuItemId: 3, name: 'Poutine', quantity: 1, unitPriceCents: 1600 },
+];
 
 /* ------------------------------------------------------------------ */
 /* Scénarios                                                           */
@@ -255,7 +255,8 @@ const SCENARIOS: Scenario[] = [
         effect: (w) => setTable(w, 4, { status: 'occupied', serverId: 'lea', guests: 3, waiting: 0 }),
       },
       {
-        narration: "Léa prend la commande. L'API valide les items et crée la commande 12, au statut « prise ».",
+        narration:
+          "Léa prend la commande. L'API valide les items et crée la commande 12, en copiant le nom et le prix de chaque item.",
         request: {
           actor: 'lea',
           method: 'POST',
@@ -263,64 +264,53 @@ const SCENARIOS: Scenario[] = [
           body: {
             tableId: 4,
             items: [
-              { menuItemId: 2, quantity: 2 },
-              { menuItemId: 3, quantity: 1, note: 'sans oignons' },
+              { menuItemId: 2, quantity: 1 },
+              { menuItemId: 3, quantity: 1 },
             ],
           },
         },
         response: {
           status: 201,
-          body: {
-            id: 12,
-            tableId: 4,
-            serverId: 1,
-            status: 'placed',
-            items: ORDER_12_ITEMS,
-            history: history12(['placed', '2026-10-15T18:02:00Z', 1]),
-          },
+          body: { id: 12, tableId: 4, serverId: 1, items: ORDER_12_FIRST, createdAt: CREATED_AT },
         },
-        effect: (w) => setTable(w, 4, { orderId: 12, orderStatus: 'placed' }),
+        effect: (w) => recordOrder(w, 4, 12),
       },
       {
-        narration: 'Léa envoie la commande en cuisine : transition « prise » vers « en cuisine ».',
-        request: { actor: 'lea', method: 'PATCH', path: '/orders/12/status', body: { status: 'in_kitchen' } },
-        response: {
-          status: 200,
+        narration:
+          'Le troisième client se décide : une tourtière de plus. Léa est la serveuse assignée, elle peut remplacer les lignes de la commande.',
+        request: {
+          actor: 'lea',
+          method: 'PUT',
+          path: '/orders/12/items',
           body: {
-            id: 12,
-            tableId: 4,
-            serverId: 1,
-            status: 'in_kitchen',
-            history: history12(['placed', '2026-10-15T18:02:00Z', 1], ['in_kitchen', '2026-10-15T18:03:00Z', 1]),
+            items: [
+              { menuItemId: 2, quantity: 2 },
+              { menuItemId: 3, quantity: 1 },
+            ],
           },
         },
-        effect: (w) =>
-          upsertTicket(setTable(w, 4, { orderStatus: 'in_kitchen' }), {
-            orderId: 12,
-            tableId: 4,
-            status: 'in_kitchen',
-          }),
+        response: {
+          status: 200,
+          body: { id: 12, tableId: 4, serverId: 1, items: ORDER_12_FINAL, createdAt: CREATED_AT },
+        },
       },
       {
         narration: 'Léa retourne à son poste. Aucune requête : se déplacer ne change pas les données.',
         moves: [{ actor: 'lea', to: HOME.lea }],
       },
       {
-        narration: "L'écran de la cuisine interroge l'API pour connaître les commandes à préparer.",
-        request: { actor: 'marc', method: 'GET', path: '/orders?status=in_kitchen' },
+        narration: "L'écran de la cuisine interroge l'API pour afficher la commande de la table 4.",
+        request: { actor: 'marc', method: 'GET', path: '/orders?tableId=4' },
         response: {
           status: 200,
-          body: [{ id: 12, tableId: 4, status: 'in_kitchen', items: ORDER_12_ITEMS }],
+          body: [{ id: 12, tableId: 4, serverId: 1, items: ORDER_12_FINAL, createdAt: CREATED_AT }],
         },
+        effect: (w) => addTicket(w, { orderId: 12, tableId: 4 }),
       },
       {
-        narration: 'Marc termine les plats et les dépose au passe : transition « en cuisine » vers « prête ».',
-        request: { actor: 'marc', method: 'PATCH', path: '/orders/12/status', body: { status: 'ready' } },
-        response: { status: 200, body: { id: 12, tableId: 4, serverId: 1, status: 'ready' } },
-        effect: (w) => ({
-          ...upsertTicket(setTable(w, 4, { orderStatus: 'ready' }), { orderId: 12, tableId: 4, status: 'ready' }),
-          passePlate: true,
-        }),
+        narration:
+          "Marc prépare les plats et les dépose au passe. Aucune requête : dans ce TP, l'API ne suit pas la préparation des plats.",
+        effect: (w) => ({ ...removeTicket(w, 12), passePlate: true }),
       },
       {
         narration: 'Léa va chercher les plats au passe.',
@@ -328,12 +318,9 @@ const SCENARIOS: Scenario[] = [
         effect: (w) => ({ ...setActor(w, 'lea', { carrying: true }), passePlate: false }),
       },
       {
-        narration: 'Léa sert la table 4 : transition « prête » vers « servie ».',
+        narration: "Léa sert la table 4. Ici non plus, aucune requête : le service des plats n'est pas suivi par l'API.",
         moves: [{ actor: 'lea', to: near(4) }],
-        request: { actor: 'lea', method: 'PATCH', path: '/orders/12/status', body: { status: 'served' } },
-        response: { status: 200, body: { id: 12, tableId: 4, serverId: 1, status: 'served' } },
-        effect: (w) =>
-          removeTicket(setActor(setTable(w, 4, { orderStatus: 'served', plate: true }), 'lea', { carrying: false }), 12),
+        effect: (w) => setActor(setTable(w, 4, { plate: true }), 'lea', { carrying: false }),
       },
       {
         narration: "Les clients demandent l'addition. L'API calcule le total avec la TPS et la TVQ.",
@@ -344,13 +331,7 @@ const SCENARIOS: Scenario[] = [
         },
       },
       {
-        narration: 'Le paiement est reçu : transition « servie » vers « payée ».',
-        request: { actor: 'lea', method: 'PATCH', path: '/orders/12/status', body: { status: 'paid' } },
-        response: { status: 200, body: { id: 12, tableId: 4, serverId: 1, status: 'paid' } },
-        effect: (w) => setTable(w, 4, { orderStatus: 'paid' }),
-      },
-      {
-        narration: "Aucune commande active : Léa peut libérer la table 4.",
+        narration: 'Les clients paient et partent. Léa, serveuse assignée, libère la table 4.',
         request: { actor: 'lea', method: 'POST', path: '/tables/4/release' },
         response: {
           status: 200,
@@ -359,7 +340,8 @@ const SCENARIOS: Scenario[] = [
         effect: (w) => setTable(w, 4, freeTable()),
       },
       {
-        narration: 'Les clients sont partis. Léa retourne à son poste, la table 4 est libre.',
+        narration:
+          'Léa retourne à son poste. La table 4 est libre ; la commande 12 reste enregistrée dans le dépôt.',
         moves: [{ actor: 'lea', to: HOME.lea }],
       },
     ],
@@ -368,7 +350,7 @@ const SCENARIOS: Scenario[] = [
     id: 'refus-400',
     label: 'Refus 400',
     summary:
-      'Une commande mal formée est refusée en bloc, avec la liste de toutes les erreurs. Rien n\'est enregistré.',
+      "Deux requêtes invalides : une commande mal formée, puis une installation sur une table déjà occupée. Rien n'est enregistré.",
     initial: () => {
       const w = setTable(baseWorld(), 5, { status: 'occupied', serverId: 'sam', guests: 4 });
       return { ...w, actors: { ...w.actors, sam: near(5) } };
@@ -403,7 +385,8 @@ const SCENARIOS: Scenario[] = [
         },
       },
       {
-        narration: "La table 5 n'a toujours aucune commande : un refus ne modifie pas les données. Sam corrige et renvoie.",
+        narration:
+          "La table 5 n'a toujours aucune commande : un refus ne modifie pas les données. Sam corrige et renvoie.",
         request: {
           actor: 'sam',
           method: 'POST',
@@ -422,14 +405,32 @@ const SCENARIOS: Scenario[] = [
             id: 13,
             tableId: 5,
             serverId: 2,
-            status: 'placed',
             items: [
               { menuItemId: 1, name: "Soupe à l'oignon", quantity: 2, unitPriceCents: 950 },
               { menuItemId: 3, name: 'Poutine', quantity: 2, unitPriceCents: 1600 },
             ],
+            createdAt: CREATED_AT,
           },
         },
-        effect: (w) => setTable(w, 5, { orderId: 13, orderStatus: 'placed' }),
+        effect: (w) => recordOrder(w, 5, 13),
+      },
+      {
+        narration: "Léa veut installer deux clients à la table 5, sans voir qu'elle est déjà occupée.",
+        moves: [{ actor: 'lea', to: near(5, 'left') }],
+        request: { actor: 'lea', method: 'POST', path: '/tables/5/seat', body: { guests: 2 } },
+        response: {
+          status: 400,
+          body: {
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: 'La table 5 est déjà occupée.',
+            },
+          },
+        },
+      },
+      {
+        narration: 'La table 5 reste assignée à Sam. Léa retourne à son poste.',
+        moves: [{ actor: 'lea', to: HOME.lea }],
       },
     ],
   },
@@ -438,14 +439,10 @@ const SCENARIOS: Scenario[] = [
     label: 'Refus 403',
     summary:
       "Sam tente de modifier une commande d'une table qui ne lui est pas assignée. L'API reconnaît qui il est, mais refuse l'action.",
-    initial: () =>
-      setTable(baseWorld(), 4, {
-        status: 'occupied',
-        serverId: 'lea',
-        guests: 3,
-        orderId: 12,
-        orderStatus: 'placed',
-      }),
+    initial: () => ({
+      ...setTable(baseWorld(), 4, { status: 'occupied', serverId: 'lea', guests: 3, orderId: 12 }),
+      orderCount: 2,
+    }),
     steps: [
       {
         narration: 'Sam passe près de la table 4 et tente de modifier la commande 12 de Léa.',
@@ -471,7 +468,7 @@ const SCENARIOS: Scenario[] = [
         moves: [{ actor: 'sam', to: HOME.sam }],
       },
       {
-        narration: "Léa fait la même modification. Elle est la serveuse assignée et la commande est encore « prise » : c'est accepté.",
+        narration: "Léa fait la même modification. Elle est la serveuse assignée : c'est accepté.",
         moves: [{ actor: 'lea', to: near(4) }],
         request: {
           actor: 'lea',
@@ -485,65 +482,10 @@ const SCENARIOS: Scenario[] = [
             id: 12,
             tableId: 4,
             serverId: 1,
-            status: 'placed',
             items: [{ menuItemId: 3, name: 'Poutine', quantity: 3, unitPriceCents: 1600 }],
+            createdAt: CREATED_AT,
           },
         },
-      },
-    ],
-  },
-  {
-    id: 'refus-409',
-    label: 'Refus 409',
-    summary:
-      "Léa veut servir une commande que la cuisine n'a pas terminée. La demande est bien formée et autorisée, mais incompatible avec l'état actuel.",
-    initial: () => {
-      const w = setTable(baseWorld(), 4, {
-        status: 'occupied',
-        serverId: 'lea',
-        guests: 3,
-        orderId: 12,
-        orderStatus: 'in_kitchen',
-      });
-      return upsertTicket(w, { orderId: 12, tableId: 4, status: 'in_kitchen' });
-    },
-    steps: [
-      {
-        narration: 'Léa tente de marquer la commande 12 comme servie, alors qu\'elle est encore en cuisine.',
-        moves: [{ actor: 'lea', to: near(4) }],
-        request: { actor: 'lea', method: 'PATCH', path: '/orders/12/status', body: { status: 'served' } },
-        response: {
-          status: 409,
-          body: {
-            error: {
-              code: 'INVALID_TRANSITION',
-              message: 'Impossible de passer de in_kitchen à served.',
-              details: { currentStatus: 'in_kitchen', allowed: ['ready'] },
-            },
-          },
-        },
-      },
-      {
-        narration: 'Marc termine la commande : « en cuisine » vers « prête ».',
-        request: { actor: 'marc', method: 'PATCH', path: '/orders/12/status', body: { status: 'ready' } },
-        response: { status: 200, body: { id: 12, tableId: 4, serverId: 1, status: 'ready' } },
-        effect: (w) => ({
-          ...upsertTicket(setTable(w, 4, { orderStatus: 'ready' }), { orderId: 12, tableId: 4, status: 'ready' }),
-          passePlate: true,
-        }),
-      },
-      {
-        narration: 'Léa récupère les plats au passe.',
-        moves: [{ actor: 'lea', to: PASSE }],
-        effect: (w) => ({ ...setActor(w, 'lea', { carrying: true }), passePlate: false }),
-      },
-      {
-        narration: 'La même requête est maintenant acceptée : la transition « prête » vers « servie » est permise.',
-        moves: [{ actor: 'lea', to: near(4) }],
-        request: { actor: 'lea', method: 'PATCH', path: '/orders/12/status', body: { status: 'served' } },
-        response: { status: 200, body: { id: 12, tableId: 4, serverId: 1, status: 'served' } },
-        effect: (w) =>
-          removeTicket(setActor(setTable(w, 4, { orderStatus: 'served', plate: true }), 'lea', { carrying: false }), 12),
       },
     ],
   },
@@ -719,10 +661,6 @@ export default function ServiceSalle() {
   };
 
   const occupiedCount = TABLE_IDS.filter((id) => world.tables[id].status === 'occupied').length;
-  const activeOrders = TABLE_IDS.filter((id) => {
-    const s = world.tables[id].orderStatus;
-    return s !== null && s !== 'paid' && s !== 'cancelled';
-  }).length;
 
   return (
     <div className="og-root not-content">
@@ -798,9 +736,8 @@ export default function ServiceSalle() {
         {world.tickets.slice(0, 3).map((t, i) => (
           <g key={t.orderId} transform={`translate(342, ${64 + i * 18})`}>
             <text className="og-small" x={0} y={4}>
-              #{t.orderId} · T{t.tableId}
+              Commande #{t.orderId} · table {t.tableId}
             </text>
-            <StatusPill x={70} y={0} status={t.status} />
           </g>
         ))}
 
@@ -834,7 +771,7 @@ export default function ServiceSalle() {
           Tables occupées : {occupiedCount}
         </text>
         <text className="og-small" x={590} y={286}>
-          Commandes actives : {activeOrders}
+          Commandes enregistrées : {world.orderCount}
         </text>
         <text className="og-small" x={590} y={306}>
           En attente au passe : {world.passePlate ? 1 : 0}
@@ -845,7 +782,7 @@ export default function ServiceSalle() {
           <text className="og-small og-strong" x={0} y={0}>
             Requêtes (verbe + route)
           </text>
-          {(['GET', 'POST', 'PUT', 'PATCH'] as HttpMethod[]).map((m, i) => (
+          {(['GET', 'POST', 'PUT'] as HttpMethod[]).map((m, i) => (
             <g key={m} transform={`translate(${i * 49}, 12)`}>
               <rect x={0} y={0} width={45} height={15} rx={7.5} fill={METHOD_COLOR[m]} />
               <text className="og-legend-text" x={22.5} y={11} textAnchor="middle">
@@ -948,19 +885,6 @@ function Plate({ x, y }: { x: number; y: number }) {
   );
 }
 
-function StatusPill({ x, y, status }: { x: number; y: number; status: OrderStatus }) {
-  const label = STATUS_LABEL[status];
-  const width = label.length * 5.6 + 12;
-  return (
-    <g transform={`translate(${x}, ${y})`}>
-      <rect className={`og-pill og-pill-${status}`} x={0} y={-7} width={width} height={14} rx={7} />
-      <text className="og-pill-text" x={width / 2} y={3.5} textAnchor="middle">
-        {label}
-      </text>
-    </g>
-  );
-}
-
 function TableView({ id, state }: { id: TableId; state: TableState }) {
   const c = TABLES[id];
   const chairs = [45, 135, 225, 315].map((deg) => {
@@ -969,7 +893,7 @@ function TableView({ id, state }: { id: TableId; state: TableState }) {
   });
   const occupiedBy = state.serverId ? ACTORS[state.serverId] : null;
   const seated = state.status === 'occupied' ? state.guests : 0;
-  const pillLabel = state.orderStatus ? STATUS_LABEL[state.orderStatus] : '';
+  const pillLabel = state.orderId !== null ? `#${state.orderId}` : '';
   const pillWidth = pillLabel.length * 5.6 + 12;
 
   return (
@@ -988,10 +912,10 @@ function TableView({ id, state }: { id: TableId; state: TableState }) {
       <text className="og-table-label" x={c.x} y={c.y - 6} textAnchor="middle">
         T{id}
       </text>
-      {state.orderStatus && (
+      {state.orderId !== null && (
         <g>
           <rect
-            className={`og-pill og-pill-${state.orderStatus}`}
+            className="og-pill og-pill-order"
             x={c.x - pillWidth / 2}
             y={c.y + 3}
             width={pillWidth}

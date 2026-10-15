@@ -207,12 +207,7 @@
   fill: #ffffff;
 }
 
-.og-pill-placed { fill: #475569; }
-.og-pill-in_kitchen { fill: #7c3aed; }
-.og-pill-ready { fill: #c2410c; }
-.og-pill-served { fill: #15803d; }
-.og-pill-paid { fill: #1d4ed8; }
-.og-pill-cancelled { fill: #6b7280; }
+.og-pill-order { fill: #475569; }
 
 .og-api {
   fill: var(--og-panel);

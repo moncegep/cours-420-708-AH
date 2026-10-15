@@ -40,12 +40,12 @@ export default defineConfig({
 						{ label: "Tests unitaires", slug: "exercices/03-tests" },
 					],
 				},
-				// {
-				// 	label: 'TPs',
-				// 	items: [
-				// 		{ label: "TP1 - Ogodo", slug: "tps/01-api" },
-				// 	],
-				// },
+				{
+					label: 'TPs',
+					items: [
+						{ label: "TP1 - Ogodo", slug: "tps/01-api" },
+					],
+				},
 				// {
 				// 	label: 'Reference',
 				// 	items: [{ autogenerate: { directory: 'reference' } }],

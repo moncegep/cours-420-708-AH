@@ -1,0 +1,264 @@
+---
+title: "TP1 : API de service en salle du restaurant Ogodo"
+description: "Concevoir et développer avec Express 5 une API de gestion du service en salle (tables, personnel, menu, commandes), décomposée en modules préparant le passage aux microservices."
+---
+
+import Aside from '../../../components/Aside.astro';
+import Checkpoint from '../../../components/Checkpoint.astro';
+import ServiceSalle from '../../../components/react/ServiceSalle.tsx';
+
+## Mise en situation
+
+**Ogodo** est un restaurant de quartier de six tables. Jusqu'ici, le service se coordonne sur papier : les serveurs notent les commandes sur un carnet, la cuisine les reçoit sur des billets, et l'addition se calcule à la main. Les erreurs sont fréquentes : une commande modifiée par la mauvaise personne, deux serveurs qui installent des clients à la même table, une addition mal calculée.
+
+Ogodo souhaite remplacer ce fonctionnement par une **API** (interface de programmation applicative : un ensemble de points d'accès par lesquels des applications échangent des données) que les tablettes des serveurs et l'écran de la cuisine pourront interroger.
+
+Tu développes cette API. Elle doit gérer les tables, le personnel, le menu et les commandes, en faisant respecter quelques règles simples du service.
+
+## Le service en action
+
+L'animation ci-dessous montre le comportement attendu de ton API. Chaque déplacement du personnel est un geste physique ; chaque pastille qui voyage vers l'API est une **requête HTTP**, et la pastille qui revient est la **réponse**, avec son code de statut.
+
+<ServiceSalle client:visible />
+
+En observant les scénarios, porte attention aux points suivants :
+
+1. **Qui envoie la requête.** Un serveur ou la cuisine. L'en-tête `X-Staff-Id` (visible dans le journal) indique à l'API qui fait la demande.
+2. **Quand les données changent.** Une table ou une commande n'est modifiée qu'après une réponse de la famille 2xx. Un refus laisse les données intactes.
+3. **Ce qui distingue les refus.** Une requête invalide (400) et une action interdite pour cette personne (403) sont deux situations différentes.
+4. **Ce que contient le journal.** Chaque ligne du journal pourrait devenir un test de ton API : une requête précise, une réponse attendue.
+
+## Modèle de données
+
+Les noms de champs sont imposés : ils font partie du contrat.
+
+**StaffMember** (membre du personnel)
+
+| Champ | Type | Remarque |
+|---|---|---|
+| `id` | entier | généré par l'API |
+| `name` | chaîne | non vide |
+| `role` | `"server"` ou `"kitchen"` | serveur ou cuisine |
+
+**Table**
+
+| Champ | Type | Remarque |
+|---|---|---|
+| `id` | entier | généré par l'API |
+| `number` | entier | numéro affiché |
+| `seats` | entier | nombre de places, de 1 à 12 |
+| `status` | `"free"` ou `"occupied"` | libre ou occupée |
+| `serverId` | entier ou `null` | serveur assigné quand la table est occupée |
+| `guests` | entier | nombre de clients installés, 0 si libre |
+
+**MenuItem** (item du menu)
+
+| Champ | Type | Remarque |
+|---|---|---|
+| `id` | entier | généré par l'API |
+| `name` | chaîne | non vide |
+| `category` | `"starter"`, `"main"`, `"dessert"` ou `"drink"` | |
+| `priceCents` | entier | prix en cents, strictement positif |
+| `available` | booléen | `false` si l'item ne peut pas être commandé |
+
+**Order** (commande)
+
+| Champ | Type | Remarque |
+|---|---|---|
+| `id` | entier | généré par l'API |
+| `tableId` | entier | |
+| `serverId` | entier | serveur assigné à la table au moment de la commande |
+| `items` | tableau | lignes de la commande (voir ci-dessous) |
+| `createdAt` | chaîne ISO 8601 | |
+
+Une ligne de commande contient `menuItemId`, `name`, `quantity` et `unitPriceCents`.
+
+<Aside type="tip" title="Pourquoi des cents ?">
+Les nombres à virgule de JavaScript ne représentent pas exactement certains montants (essaie `0.1 + 0.2` dans la console). Stocker les prix en **cents entiers** évite ces erreurs d'arrondi. Le format **ISO 8601** est une norme d'écriture des dates, par exemple `2026-10-15T18:02:00Z` ; `new Date().toISOString()` la produit directement.
+</Aside>
+
+### Données initiales
+
+Au démarrage, l'API contient les données suivantes (fichier `src/data/seed.js`). Les tests peuvent fournir leurs propres données.
+
+```js
+export const seed = {
+  staff: [
+    { id: 1, name: 'Léa', role: 'server' },
+    { id: 2, name: 'Sam', role: 'server' },
+    { id: 3, name: 'Marc', role: 'kitchen' },
+  ],
+  tables: [1, 2, 3, 4, 5, 6].map((n) => ({
+    id: n, number: n, seats: 4, status: 'free', serverId: null, guests: 0,
+  })),
+  menuItems: [
+    { id: 1, name: "Soupe à l'oignon", category: 'starter', priceCents: 950, available: true },
+    { id: 2, name: 'Tourtière', category: 'main', priceCents: 2200, available: true },
+    { id: 3, name: 'Poutine', category: 'main', priceCents: 1600, available: true },
+    { id: 4, name: 'Pouding chômeur', category: 'dessert', priceCents: 900, available: true },
+    { id: 5, name: 'Limonade maison', category: 'drink', priceCents: 500, available: true },
+    { id: 6, name: 'Pâté chinois', category: 'main', priceCents: 1900, available: false },
+  ],
+};
+```
+
+## Identifier le personnel
+
+Les actions du service (installer des clients, commander, modifier une commande, libérer une table) exigent de savoir **qui** fait la demande. Au TP1, cette identification se fait par un en-tête HTTP :
+
+```
+X-Staff-Id: 1
+```
+
+Un middleware partagé lit cet en-tête et retrouve le membre du personnel correspondant. Si l'en-tête est absent, n'est pas un entier, ou ne correspond à aucun membre, l'API répond **401**.
+
+<Aside type="caution" title="Ce n'est pas de l'authentification">
+N'importe qui peut écrire `X-Staff-Id: 1` dans une requête. Cet en-tête sert à **identifier** l'auteur d'une action, pas à **prouver** son identité. L'authentification véritable (jetons, mots de passe) sera abordée plus tard. Les routes de gestion (personnel, tables, menu) n'exigent pas cet en-tête au TP1.
+</Aside>
+
+## Contrat de l'API
+
+Les codes indiqués sont ceux que ton API doit pouvoir produire pour chaque route. Le corps des réponses de succès est la ressource concernée, sauf mention contraire.
+
+### Module `staff`
+
+| Verbe | Chemin | Description | Codes |
+|---|---|---|---|
+| GET | `/staff` | Liste du personnel | 200 |
+| GET | `/staff/:id` | Un membre du personnel | 200, 404 |
+| POST | `/staff` | Ajouter un membre (`name`, `role`) | 201, 400 |
+
+### Module `tables`
+
+| Verbe | Chemin | Description | Codes |
+|---|---|---|---|
+| GET | `/tables` | Liste, filtrable par `?status=free` ou `?status=occupied` | 200, 400 |
+| GET | `/tables/:id` | Une table | 200, 404 |
+| POST | `/tables` | Ajouter une table (`number`, `seats`) | 201, 400 |
+| PUT | `/tables/:id` | Remplacer `number` et `seats` | 200, 400, 404 |
+| DELETE | `/tables/:id` | Supprimer une table | 204, 404 |
+| POST | `/tables/:id/seat` | Installer des clients (`guests`) ; le demandeur devient le serveur assigné | 200, 400, 401, 403, 404 |
+| POST | `/tables/:id/release` | Libérer la table | 200, 401, 403, 404 |
+
+### Module `menu`
+
+| Verbe | Chemin | Description | Codes |
+|---|---|---|---|
+| GET | `/menu-items` | Liste, filtrable par `?category=` | 200, 400 |
+| GET | `/menu-items/:id` | Un item | 200, 404 |
+| POST | `/menu-items` | Ajouter un item | 201, 400 |
+| PUT | `/menu-items/:id` | Remplacer un item | 200, 400, 404 |
+| DELETE | `/menu-items/:id` | Supprimer un item | 204, 404 |
+
+### Module `orders`
+
+| Verbe | Chemin | Description | Codes |
+|---|---|---|---|
+| GET | `/orders` | Liste, filtrable par `?tableId=` | 200, 400 |
+| GET | `/orders/:id` | Une commande | 200, 404 |
+| POST | `/orders` | Créer une commande (`tableId`, `items`) | 201, 400, 401, 403, 404 |
+| PUT | `/orders/:id/items` | Remplacer les lignes d'une commande (`items`) | 200, 400, 401, 403, 404 |
+| GET | `/orders/:id/bill` | Calculer l'addition | 200, 404 |
+
+## Règles métier
+
+**Tables**
+
+1. Installer des clients exige un membre de rôle `server` (sinon 403), un nombre de clients entier entre 1 et le nombre de places de la table (sinon 400), et une table libre (sinon 400).
+2. Seul le serveur assigné peut libérer une table (sinon 403).
+
+**Commandes**
+
+3. Seul le serveur assigné à la table peut y créer une commande (sinon 403). Une table libre n'a pas de serveur assigné : une commande sur une table libre est donc refusée par cette même règle.
+4. Une commande contient de 1 à 20 lignes. Chaque ligne référence un item existant et disponible, avec une quantité entière de 1 à 20 (sinon 400). Le nom et le prix de l'item sont **copiés** dans la ligne au moment de la commande : un changement de prix au menu ne modifie pas une commande existante.
+5. Seul le serveur assigné peut remplacer les lignes d'une commande (sinon 403).
+
+<Aside type="note" title="Table déjà occupée : pourquoi 400 ?">
+Installer des clients à une table occupée est ici refusé avec 400. Dans bien des API, ce cas relève plutôt du code 409 (*Conflict*) : la requête est bien formée, mais incompatible avec l'état actuel de la ressource. Cette distinction sera abordée plus tard dans le cours.
+</Aside>
+
+### Ordre des vérifications
+
+Quand plusieurs problèmes sont présents, l'API signale le premier dans cet ordre : identification (401), existence de la ressource (404), validité des données (400), droit d'agir (403).
+
+Par exemple, si Sam envoie une commande invalide pour une table de Léa, l'API répond 400 : les données sont vérifiées avant le droit d'agir.
+
+## Erreurs
+
+Toutes les erreurs suivent le même format. `details` est facultatif.
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "La commande est invalide.",
+    "details": "..."
+  }
+}
+```
+
+| Code HTTP | `error.code` | Situation |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | données invalides ; `details` liste **toutes** les erreurs trouvées |
+| 401 | `UNAUTHENTICATED` | `X-Staff-Id` absent ou inconnu |
+| 403 | `FORBIDDEN` | la personne identifiée n'a pas le droit de faire cette action |
+| 404 | `NOT_FOUND` | la ressource n'existe pas |
+| 500 | `INTERNAL_ERROR` | erreur imprévue ; le message ne révèle aucun détail interne |
+
+Les services lèvent des instances d'une classe `HttpError` (avec un statut, un code et un message). Un **middleware d'erreurs centralisé** les convertit en réponse JSON. Aucun contrôleur ne construit lui-même une réponse d'erreur.
+
+## Addition et taxes
+
+`GET /orders/:id/bill` calcule l'addition d'une commande :
+
+- `subtotalCents` : somme de `quantity × unitPriceCents` sur toutes les lignes ;
+- `tpsCents` : 5 % du sous-total ;
+- `tvqCents` : 9,975 % du sous-total ;
+- `totalCents` : sous-total + TPS + TVQ.
+
+Chaque taxe est arrondie au cent le plus proche (`Math.round`). Exemple, pour deux tourtières et une poutine :
+
+```json
+{ "orderId": 12, "subtotalCents": 6000, "tpsCents": 300, "tvqCents": 599, "totalCents": 6899 }
+```
+
+La TVQ vaut ici 598,5 cents, arrondis à 599. Ce cas d'arrondi mérite un test.
+
+## Tests unitaires attendus
+
+Les **tests unitaires** s'exécutent avec `npm test` (script `vitest run`).
+
+Écris **au moins 6 cas de tests parmi les suivants**. 
+Pour un refus, vérifie le statut de l'erreur levée et, au besoin, que les données n'ont pas changé.
+
+**Tables**
+
+1. L'installation assigne le serveur à la table et met à jour `status` et `guests`.
+2. L'installation demandée par un membre de la cuisine est refusée (403).
+3. L'installation avec un nombre de clients hors limites (0, ou plus que `seats`) est refusée (400).
+4. L'installation sur une table déjà occupée est refusée (400).
+5. La libération demandée par un autre serveur que le serveur assigné est refusée (403).
+6. La libération remet la table à `status: "free"`, `serverId: null` et `guests: 0`.
+
+**Commandes**
+
+7. La création d'une commande copie le nom et le prix de chaque item dans ses lignes.
+8. La création par un serveur qui n'est pas assigné à la table est refusée (403).
+9. Une commande qui contient deux erreurs à la fois est refusée (400), et l'erreur liste les **deux** problèmes dans `details`.
+10. La création avec un item indisponible est refusée (400).
+11. Le remplacement des lignes par un autre serveur que le serveur assigné est refusé (403).
+12. L'addition calcule la TPS et la TVQ avec l'arrondi : un sous-total de 6000 donne 300, 599 et 6899.
+
+
+{/*
+## Grille d'évaluation (sur 100, pondération 30 %)
+
+| Critère | Points |
+|---|---|
+| Architecture : modules par domaine, couches distinctes, règles de frontière, createApp et injection des dépôts | 25 |
+| Conformité au contrat et règles métier : routes, droits du serveur assigné, copie du prix, addition | 30 |
+| Validation et erreurs : format uniforme, codes justes, ordre des vérifications, erreurs multiples en 400 | 15 |
+| Tests Vitest : 12 cas de services, points d'accès, isolation des tests, scénario complet | 20 |
+| Git, README et collection Bruno ou Postman | 10 |
+| Bonus PostgreSQL (Supabase) sans modification des services | jusqu'à +10, note plafonnée à 100 |
+*/}
