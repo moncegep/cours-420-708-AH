@@ -1,19 +1,11 @@
 ---
-
 title: "Structurer une API Express"
-
 description: "Séparer les responsabilités dans une API Express : routes, contrôleurs, services, modèles et intergiciels. Suivre une ressource à travers ces composants, puis examiner les adaptations nécessaires pour remplacer un stockage en mémoire par PostgreSQL ou MongoDB."
-
 ---
 
-
-
 import MarginNote from "../../../components/MarginNote.astro";
-
 import Highlight from "../../../components/Highlight.astro";
-
 import Checkpoint from "../../../components/Checkpoint.astro";
-
 import AnalyseRoute from "../../../components/react/AnalyseRoute.jsx";
 
 
@@ -33,279 +25,144 @@ Les modifications deviennent plus délicates et les tests plus difficiles à ré
 
 Cette page présente une façon d’**organiser une API Express** en répartissant ces responsabilités. La fiche suivante montrera comment tester ses différentes composantes.
 
-
-
 <MarginNote type="attention" titre="Pourquoi commencer sans base de données ?">
-
 Pour nous concentrer sur l’organisation du code, nous conservons d’abord les boîtes dans un **tableau en mémoire**. Les données sont donc perdues lors du redémarrage du serveur. La section 5 présente les changements à prévoir pour utiliser une base de données.
-
 </MarginNote>
-
-
 
 ## 1. Les limites d’une route qui gère tout
 
-
-
 Voici une API de gestion de boîtes regroupée dans un seul fichier `index.js`. Elle permet de consulter la liste des boîtes, d’en créer, d’en consulter une et d’en supprimer une. Explorez cet exemple avant de poursuivre : chaque couleur met en évidence une responsabilité distincte, donc un aspect du code susceptible d’évoluer indépendamment des autres.
-
-
 
 <AnalyseRoute client:visible />
 
-
-
 Ces quelques lignes combinent sept responsabilités. Une nouvelle règle de validation, un changement de format de réponse ou le remplacement du stockage peuvent alors nécessiter des modifications dans le même bloc de code. Il devient plus difficile d’en mesurer les conséquences.
-
-
-
 Deux autres problèmes apparaissent en explorant le filtre **Code répété** :
 
-
-
-1\. **La répétition du code.** La recherche d’une boîte et le traitement du cas où elle n’existe pas sont reproduits dans deux routes, avec `find` dans l’une et `findIndex` dans l’autre. Modifier un seul de ces traitements risque de créer des comportements incohérents.
-
-2\. **La difficulté de tester les règles séparément.** La règle qui interdit deux boîtes portant le même nom est intégrée à la route. Elle ne peut donc pas être appelée directement depuis un test sans extraire ou réorganiser le code.
-
-
+1. **La répétition du code.** La recherche d’une boîte et le traitement du cas où elle n’existe pas sont reproduits dans deux routes, avec `find` dans l’une et `findIndex` dans l’autre. Modifier un seul de ces traitements risque de créer des comportements incohérents.
+2. **La difficulté de tester les règles séparément.** La règle qui interdit deux boîtes portant le même nom est intégrée à la route. Elle ne peut donc pas être appelée directement depuis un test sans extraire ou réorganiser le code.
 
 ## 2. Une organisation inspirée du MVC
 
-
-
 <MarginNote type="definition" titre="MVC">
-
 **Modèle–Vue–Contrôleur (MVC)** : patron d’architecture qui distingue la gestion des données et des règles associées (modèle), leur présentation (vue) et le traitement des interactions (contrôleur). Les responsabilités exactes varient selon les applications et les variantes du MVC.
-
 </MarginNote>
-
-
 
 Une API Express peut s’inspirer du MVC, mais elle ne possède généralement pas de vue HTML dans le serveur : elle produit notamment des réponses JSON, que d’autres applications peuvent afficher. Nous utiliserons ici une **organisation en couches**, parmi plusieurs approches possibles, avec des routes, des contrôleurs, des services et des modèles, ainsi que des intergiciels (*middlewares*) :
 
-
-
 | Couche | Dossier | Responsabilité | Connait HTTP ? |
-
 |---|---|---|---|
-
 | Routes | `routes/` | Associer une méthode HTTP et un chemin à des intergiciels et à un contrôleur | oui |
-
 | Contrôleurs | `controleurs/` | Lire la requête, appeler le service, formuler la réponse | oui |
-
 | Services | `services/` | Appliquer les règles métier | **non** |
-
 | Modèles | `modeles/` | Gérer l’accès aux données | **non** |
-
 | Intergiciels | `intergiciels/` | Traiter les requêtes en amont des contrôleurs ou gérer les erreurs | oui |
 
 
-
 <MarginNote type="attention" titre="Une adaptation du MVC">
-
 Le MVC comporte traditionnellement trois rôles. L’ajout d’une couche **service** permet de déplacer les règles métier hors des contrôleurs pour les réutiliser et les tester plus facilement. Cette organisation est un choix de conception, et non une structure imposée par Express.
-
 </MarginNote>
 
-
-
 L'arborescence correspondante :
-
-
 
 ```text
 
 src/
 
 ├── app.js               assemblage de l'application
-
 ├── serveur.js           démarrage (app.listen)
-
 ├── routes/
-
 │   └── boites.js
-
 ├── controleurs/
-
 │   └── boites.js
-
 ├── services/
-
 │   └── boites.js
-
 ├── modeles/
-
 │   └── boite.js
-
 ├── regles/
-
 │   ├── verifications.js petites fonctions de vérification réutilisables
-
 │   └── boite.js         règles de validation d'une boite
-
 └── intergiciels/
-
     ├── boites.js        verifierId, chargerBoite
-
     ├── validation.js    validerCorps
-
     ├── mesure.js        mesurerDuree
-
     └── erreurs.js       gererErreurs
-
 ```
-
-
 
 <Highlight>Dans cette organisation, les contrôleurs passent par les services pour accéder aux données, et les services passent par les modèles. Les routes associent les traitements HTTP aux contrôleurs et aux intergiciels.</Highlight>
 
-
-
 Nous adoptons ici une **règle de dépendance** : les contrôleurs ne consultent pas directement les modèles, et les services ne manipulent pas les objets HTTP `req` et `res`. Cette séparation permet de tester les responsabilités plus indépendamment.
 
-
-
 <MarginNote type="astuce" titre="Une structure proportionnée">
-
 Pour une petite API, multiplier les dossiers n’est pas toujours nécessaire. La séparation devient particulièrement utile lorsque plusieurs routes partagent des traitements ou que l’application évolue.
-
 </MarginNote>
-
-
 
 ## 3. Suivre une ressource à travers les couches
 
-
-
 Reprenons l’exemple des boîtes en répartissant le code dans les différents modules, en commençant par l’accès aux données.
-
-
 
 ### 3.1 Le modèle
 
-
-
 Dans cet exemple, le modèle regroupe les opérations d’accès aux boîtes. Il utilise un tableau, mais les services n’ont pas besoin de connaître cette représentation : ils appellent les méthodes exposées par `Boite`.
 
-
-
 ```js
-
 // modeles/boite.js
 
 let boites = [];
-
 let prochainId = 1;
-
-
 
 export const Boite = {
 
   async lister() {
-
     return [...boites];
-
   },
-
-
 
   async trouverParId(id) {
-
     return boites.find((b) => b.id === Number(id)) ?? null;
-
   },
-
-
 
   async existeNom(nom) {
-
     return boites.some((b) => b.nom === nom);
-
   },
-
-
 
   async creer({ nom, capacite }) {
-
     const boite = { id: prochainId++, nom, capacite };
-
     boites.push(boite);
-
     return boite;
-
   },
-
-
 
   async supprimer(id) {
-
     const avant = boites.length;
-
     boites = boites.filter((b) => b.id !== Number(id));
-
     return boites.length < avant;
-
   },
-
-
 
   vider() {                       // utile pour les tests
-
     boites = [];
-
     prochainId = 1;
-
   },
-
 };
-
 ```
-
-
-
 <MarginNote type="attention" titre="Pourquoi utiliser `async` avec un tableau ?">
-
 Les opérations sur ce tableau sont synchrones, mais les méthodes sont déclarées `async` pour retourner des promesses, comme le font généralement les appels à une base de données. Les services peuvent ainsi utiliser la même façon d’appeler le modèle après un changement de stockage. Cela ne garantit toutefois pas, à lui seul, une substitution sans modification.
-
 </MarginNote>
-
-
 
 Le tableau et le compteur ne sont pas exportés. Les autres modules ne peuvent donc pas accéder directement à ces variables : ils passent par les méthodes de `Boite`.
 
-
-
 ### 3.2 Le service
-
-
 
 Le service applique ici une règle métier : deux boîtes ne peuvent pas avoir le même nom. Il ne reçoit ni `req` ni `res`. Lorsqu’un nom est déjà utilisé, il lève une erreur que l’application traduira ensuite en réponse HTTP.
 
-
-
 ```js
-
 // services/boites.js
-
 import { Boite } from "../modeles/boite.js";
 
-
-
 export function listerBoites() {
-
   return Boite.lister();
-
 }
-
-
 
 export function trouverBoite(id) {
-
   return Boite.trouverParId(id);
-
 }
-
-
 
 export async function creerBoite({ nom, capacite }) {
 

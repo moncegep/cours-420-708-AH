@@ -1,0 +1,395 @@
+---
+title: "Brancher une base de données"
+description: "Remplacer le modèle en mémoire par une base de données PostgreSQL hébergée sur Supabase : créer la BD, configurer la connexion avec une variable d'environnement, écrire le schéma et ses contraintes, traduire les erreurs de PostgreSQL, comprendre pourquoi une règle peut être vérifiée à la fois par le service et par la BD, puis tester avec une BD de test."
+---
+
+import MarginNote from "../../../components/MarginNote.astro";
+import Highlight from "../../../components/Highlight.astro";
+import Checkpoint from "../../../components/Checkpoint.astro";
+
+<MarginNote type="prerequis">
+Cette fiche reprend l'API des boites telle qu'organisée dans [Structurer une API Express](/cours/05-express-3), et les tests de [Tester une API Express](/notes/express-tester). Elle suppose les bases du langage SQL : `CREATE TABLE`, `SELECT`, `INSERT`, `DELETE`.
+</MarginNote>
+
+Jusqu'ici, les boites vivaient dans un tableau en mémoire. La section 5 de [Structurer une API Express](/cours/05-express-3) a montré à quoi ressemblerait le modèle écrit pour PostgreSQL, sans le mettre en service. C'est ce qu'on fait maintenant : créer la base de données, y connecter l'API, et adapter les tests.
+
+## 1. Pourquoi une base de données
+
+<MarginNote type="definition" titre="Base de données (BD)">
+Un ensemble organisé de données, conservé de façon durable et géré par un logiciel spécialisé, le **système de gestion de bases de données** (SGBD). PostgreSQL est un SGBD **relationnel** : il range les données dans des tables, qu'on interroge en SQL.
+</MarginNote>
+
+Le modèle en mémoire a trois limites, qu'une BD permet de surmonter :
+
+1. **Les données disparaissent au redémarrage.** Une BD conserve les données sur disque, indépendamment de la vie du serveur.
+2. **Chaque processus a sa propre mémoire.** En production, un même service est souvent lancé en plusieurs exemplaires pour répartir la charge. Avec un tableau en mémoire, chaque exemplaire aurait ses propres boites. Avec une BD, tous les exemplaires partagent les mêmes données. C'est une condition pour qu'un service puisse être dupliqué, une idée centrale des microservices.
+3. **Des requêtes peuvent arriver en même temps.** Une BD sait faire respecter des règles même quand plusieurs écritures se produisent au même moment. La section 6 montre que ce point est moins théorique qu'il n'y parait.
+
+<MarginNote type="definition" titre="Supabase">
+Un service en ligne qui héberge des BD PostgreSQL et y ajoute d'autres services : authentification, stockage de fichiers, et une API générée automatiquement à partir des tables, que d'autres applications peuvent interroger directement. Dans ce cours, on n'en utilise que la BD : notre API s'y connecte comme elle se connecterait à n'importe quel serveur PostgreSQL.
+</MarginNote>
+
+## 2. Créer la BD sur Supabase
+
+1. Créez un compte sur [supabase.com](https://supabase.com), puis un **nouveau projet**. Choisissez une région proche, par exemple au Canada.
+2. Choisissez un **mot de passe de BD** et notez-le : il fera partie de la chaine de connexion, et Supabase ne vous le réaffichera pas.
+3. Quand le projet est prêt, cliquez sur le bouton **Connect**, en haut de la page du projet. Parmi les types de connexion proposés, choisissez **Session pooler** et copiez la chaine de connexion. Elle ressemble à ceci :
+
+```
+postgresql://postgres.abcdefghijkl:[YOUR-PASSWORD]@aws-0-ca-central-1.pooler.supabase.com:5432/postgres
+```
+
+`[YOUR-PASSWORD]` est à remplacer par le mot de passe choisi à l'étape 2.
+
+<MarginNote type="attention" titre="Pourquoi Session pooler">
+Supabase propose aussi une connexion **directe**, plus simple en apparence. Sur l'offre gratuite, elle n'est accessible qu'en IPv6, que bien des réseaux domestiques ne prennent pas encore en charge (IPv4 et IPv6 sont deux versions du protocole qui attribue une adresse à chaque appareil sur Internet) : la connexion échoue alors sans message clair. Le *Session pooler* est accessible en IPv4, et convient à un serveur qui reste en marche, comme le nôtre.
+</MarginNote>
+
+<MarginNote type="astuce" titre="Un projet en pause">
+Sur l'offre gratuite, Supabase met en pause un projet resté inactif quelque temps. Si votre API ne parvient plus à se connecter après quelques jours sans l'utiliser, vérifiez l'état du projet dans le tableau de bord de Supabase et relancez-le au besoin.
+</MarginNote>
+
+## 3. Configurer la connexion
+
+### 3.1 Une variable d'environnement
+
+La chaine de connexion contient un mot de passe : elle ne doit pas apparaitre dans le code, ni dans le dépôt Git. On la place dans une **variable d'environnement**.
+
+<MarginNote type="definition" titre="Variable d'environnement">
+Une valeur nommée que le système fournit à un programme au moment de son lancement, en dehors de son code. En Node, on la lit avec `process.env.NOM`. Le même code peut ainsi se connecter à une BD différente selon l'endroit où il s'exécute.
+</MarginNote>
+
+On écrit les variables dans un fichier `.env`, à la racine du projet :
+
+```bash
+# .env
+DATABASE_URL=postgresql://postgres.abcdefghijkl:motdepasse@aws-0-ca-central-1.pooler.supabase.com:5432/postgres
+```
+
+Le nom `DATABASE_URL` est une convention répandue, que bien des outils reconnaissent. On exclut ensuite le fichier de Git :
+
+```bash
+node_modules/
+.env
+.env.test
+```
+
+Node sait lire ce fichier lui-même, avec l'option `--env-file` :
+
+```json
+{
+  "scripts": {
+    "start": "node --env-file=.env src/serveur.js",
+    "test": "vitest run"
+  }
+}
+```
+
+<MarginNote type="astuce" titre="Partager la configuration sans le mot de passe">
+Puisque `.env` n'est pas dans le dépôt, une coéquipière qui clone le projet ne sait pas quelles variables définir. L'usage est d'ajouter au dépôt un fichier `.env.exemple`, avec les mêmes noms de variables et des valeurs fictives.
+</MarginNote>
+
+<MarginNote type="erreur" titre="Un mot de passe avec des caractères spéciaux">
+Dans une chaine de connexion, certains caractères ont un sens particulier : `@`, `:`, `/`, `#`... Si votre mot de passe en contient, la chaine est mal découpée et la connexion échoue. Le plus simple est de choisir un mot de passe fait de lettres et de chiffres, ou de l'encoder avec `encodeURIComponent("mot de passe")`.
+</MarginNote>
+
+### 3.2 Le pool de connexions
+
+```js
+// bd.js
+import pg from "pg";
+
+// Un pool de connexions, partagé par tous les modèles de l'application.
+export const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+});
+```
+
+<MarginNote type="definition" titre="Pool de connexions">
+Un petit groupe de connexions à la BD, ouvertes une fois et réutilisées d'une requête à l'autre. Ouvrir une connexion prend du temps ; le pool évite de le faire à chaque requête HTTP. Quand toutes ses connexions sont occupées, une nouvelle requête attend que l'une d'elles se libère.
+</MarginNote>
+
+`pool.query(sql, valeurs)` emprunte une connexion, exécute la requête, puis rend la connexion au pool. On n'a pas à ouvrir ni à fermer de connexion soi-même.
+
+### 3.3 Vérifier la connexion au démarrage
+
+```js
+// serveur.js
+import { app } from "./app.js";
+import { pool } from "./bd.js";
+
+// Vérifier la connexion avant d'accepter des requêtes : une erreur de configuration
+// apparait ainsi dès le démarrage, plutôt qu'à la première requête.
+await pool.query("SELECT 1");
+
+const PORT = process.env.PORT ?? 3000;
+app.listen(PORT, () => console.log(`API sur le port ${PORT}`));
+```
+
+Sans cette vérification, une chaine de connexion erronée ne se manifesterait qu'à la première requête, sous forme d'erreur `500`. Ici, le serveur refuse de démarrer et affiche le message d'erreur de PostgreSQL.
+
+## 4. Le schéma
+
+En mémoire, la forme d'une boite n'était écrite nulle part : c'était celle des objets qu'on rangeait dans le tableau. Une BD relationnelle demande de la déclarer d'avance, dans un **schéma**.
+
+```sql
+-- bd/schema.sql
+CREATE TABLE boites (
+  id        integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  nom       text    NOT NULL UNIQUE,
+  capacite  integer NOT NULL CHECK (capacite > 0)
+);
+
+-- Propre à Supabase : ferme la table à l'API automatique de Supabase.
+-- Notre API, qui se connecte comme propriétaire de la table, n'est pas touchée.
+ALTER TABLE boites ENABLE ROW LEVEL SECURITY;
+```
+
+Pour créer la table, ouvrez le **SQL Editor** dans le tableau de bord de Supabase, collez le contenu de `bd/schema.sql`, puis cliquez sur **Run**. Gardez ce fichier dans le dépôt : il documente la structure de la BD, et permettra de la recréer.
+
+| Élément | Rôle |
+|---|---|
+| `GENERATED ALWAYS AS IDENTITY` | PostgreSQL attribue lui-même les identifiants : 1, 2, 3... |
+| `PRIMARY KEY` | l'identifiant désigne une seule ligne |
+| `NOT NULL` | la colonne doit avoir une valeur |
+| `UNIQUE` | deux lignes ne peuvent pas avoir la même valeur dans cette colonne |
+| `CHECK (capacite > 0)` | toute ligne doit respecter la condition |
+
+<MarginNote type="definition" titre="Contrainte">
+Une règle déclarée dans le schéma, que la BD vérifie à chaque écriture. Une écriture qui la viole est refusée, quel que soit le programme qui l'a envoyée.
+</MarginNote>
+
+On peut le constater dans le SQL Editor :
+
+```sql
+INSERT INTO boites (nom, capacite) VALUES ('Vide', 0);
+```
+
+```
+ERROR:  new row for relation "boites" violates check constraint "boites_capacite_check"
+```
+
+<MarginNote type="astuce" titre="La dernière ligne du schéma">
+Elle évite un avertissement de Supabase au sujet de son API générée automatiquement. Elle ne change rien pour notre API.
+</MarginNote>
+
+<MarginNote type="astuce" titre="Des identifiants qui sautent un numéro">
+Une insertion refusée par une contrainte consomme quand même un numéro d'identifiant. Après l'essai ci-dessus, la prochaine boite créée n'aura pas forcément l'identifiant attendu. C'est normal : un identifiant sert à désigner une ligne, pas à compter les lignes.
+</MarginNote>
+
+## 5. Le modèle
+
+Le modèle reprend celui de la section 5.1 de [Structurer une API Express](/cours/05-express-3), avec un seul ajout dans `creer`, expliqué à la section suivante :
+
+```js
+// modeles/boite.js (version PostgreSQL)
+import { pool } from "../bd.js";
+
+export const Boite = {
+  async lister() {
+    const { rows } = await pool.query("SELECT id, nom, capacite FROM boites ORDER BY id");
+    return rows;
+  },
+
+  async trouverParId(id) {
+    const { rows } = await pool.query("SELECT id, nom, capacite FROM boites WHERE id = $1", [id]);
+    return rows[0] ?? null;
+  },
+
+  async existeNom(nom) {
+    const { rows } = await pool.query("SELECT 1 FROM boites WHERE nom = $1", [nom]);
+    return rows.length > 0;
+  },
+
+  async creer({ nom, capacite }) {
+    try {
+      const { rows } = await pool.query(
+        "INSERT INTO boites (nom, capacite) VALUES ($1, $2) RETURNING id, nom, capacite",
+        [nom, capacite],
+      );
+      return rows[0];
+    } catch (err) {
+      if (err.code === "23505") {        // violation de la contrainte UNIQUE
+        const doublon = new Error("nom déjà utilisé");
+        doublon.status = 409;
+        throw doublon;
+      }
+      throw err;
+    }
+  },
+
+  async supprimer(id) {
+    const { rowCount } = await pool.query("DELETE FROM boites WHERE id = $1", [id]);
+    return rowCount > 0;
+  },
+};
+```
+
+Chaque méthode envoie une requête SQL et met en forme le résultat. `pool.query` retourne un objet dont `rows` contient les lignes obtenues, sous forme d'objets dont les clés sont les noms des colonnes, et `rowCount` le nombre de lignes touchées.
+
+Les valeurs passent toujours par des paramètres (`$1`, `$2`), jamais par une chaine construite à la main. On l'a vu dans [Structurer une API Express](/cours/05-express-3) : c'est ce qui empêche une valeur de modifier la requête elle-même.
+
+<Highlight couleur="ambre">Le modèle offre exactement la même interface qu'avant. Les services, les contrôleurs, les routes et les middlewares restent intacts.</Highlight>
+
+## 6. Une règle, deux vérifications
+
+Le service vérifie déjà qu'un nom n'est pas utilisé avant de créer une boite. Pourquoi ajouter une contrainte `UNIQUE` dans la BD ?
+
+```js
+// services/boites.js (extrait)
+export async function creerBoite({ nom, capacite }) {
+  if (await Boite.existeNom(nom)) {        // 1. vérifier
+    const err = new Error("nom déjà utilisé");
+    err.status = 409;
+    throw err;
+  }
+  return Boite.creer({ nom, capacite });   // 2. insérer
+}
+```
+
+La vérification et l'insertion sont deux requêtes distinctes envoyées à la BD. Si deux demandes de création arrivent au même moment, les deux peuvent passer la vérification avant que l'une ou l'autre ait inséré quoi que ce soit.
+
+On l'a vérifié en lançant **cinq créations simultanées** de la même boite, d'abord sans la contrainte `UNIQUE` :
+
+| | Créées | Refusées par le service | Refusées par la BD |
+|---|---|---|---|
+| Sans `UNIQUE` | 3 | 2 | 0 |
+| Avec `UNIQUE` | 1 | 0 | 4 |
+
+Sans la contrainte, trois boites portent le même nom. Avec elle, une seule est créée ; les quatre autres ont toutes passé la vérification du service, et c'est la BD qui les a refusées. Les nombres exacts varient d'un essai à l'autre, mais le phénomène se reproduit facilement.
+
+<MarginNote type="definition" titre="Situation de concurrence">
+Un bogue qui ne se produit que lorsque deux opérations s'exécutent en même temps et s'entremêlent. On parle aussi de *race condition*. Ces bogues sont souvent difficiles à reproduire, parce qu'ils dépendent du moment exact où chaque opération s'exécute.
+</MarginNote>
+
+Les deux vérifications ont donc des rôles différents :
+
+1. Le **service** donne une réponse claire dans le cas courant, sans même tenter l'insertion.
+2. La **contrainte** fait respecter la règle dans tous les cas, y compris quand des requêtes s'entremêlent, ou quand un autre programme écrit dans la BD.
+
+Quand la BD refuse une insertion, `pg` lève une erreur dont la propriété `code` vaut `"23505"`, le code de PostgreSQL pour une violation d'unicité. Sans traitement, cette erreur deviendrait une réponse `500`. Le modèle la traduit donc en erreur `409`, comme celle du service : c'est le bloc `try/catch` de `creer`.
+
+<MarginNote type="attention" titre="Pourquoi traduire dans le modèle">
+Le code `23505` est un détail de PostgreSQL. En le traduisant dans le modèle, on garde ce détail dans le seul fichier qui sait que la BD est PostgreSQL. Les autres couches reçoivent une erreur `409`, quelle que soit la façon dont les données sont stockées.
+</MarginNote>
+
+De même, la contrainte `CHECK (capacite > 0)` reprend la règle de validation de `reglesBoite`. Le middleware `validerCorps` reste utile : il répond `400` avec la liste des champs en erreur, ce qu'un refus de la BD ne permet pas facilement. La contrainte, elle, protège les données si un autre programme écrit dans la BD sans passer par la validation.
+
+<Checkpoint question="Un collègue propose de retirer la vérification existeNom du service, puisque la contrainte UNIQUE suffit. L'API resterait-elle correcte ? Qu'y perdrait-on ?">
+L'API resterait correcte : la contrainte refuse tout doublon, et le modèle traduit ce refus en 409. On y perdrait surtout en clarté, puisque la règle du nom unique ne serait plus visible dans le service, là où on cherche les règles du domaine ; on enverrait aussi une insertion vouée à l'échec. Garder les deux est un choix courant : la règle est lisible dans le service, et son respect est assuré par la BD.
+</Checkpoint>
+
+## 7. Tester avec une BD
+
+### 7.1 Une BD réservée aux tests
+
+Les tests vident les tables avant chaque test. Ils ne doivent donc jamais s'exécuter sur la BD de développement, encore moins sur celle de production. On crée une **seconde BD**, réservée aux tests : sur Supabase, le plus simple est un second projet, dont on recopie le schéma avec le SQL Editor.
+
+Sa chaine de connexion va dans un fichier `.env.test`, exclu de Git lui aussi :
+
+```bash
+# .env.test
+DATABASE_URL=postgresql://postgres.mnopqrstuvwx:motdepasse@aws-0-ca-central-1.pooler.supabase.com:5432/postgres
+```
+
+La configuration de Vitest charge ce fichier :
+
+```js
+import { defineConfig } from "vitest/config";
+
+// Les tests utilisent la BD de test, jamais celle de développement.
+process.loadEnvFile(".env.test");
+
+export default defineConfig({
+  test: {
+    fileParallelism: false,   // un fichier de tests à la fois : ils partagent la même BD
+  },
+});
+```
+
+`process.loadEnvFile` fait la même chose que l'option `--env-file`, mais depuis le code. L'option `fileParallelism: false` est nécessaire ici : par défaut, Vitest exécute plusieurs fichiers de tests en parallèle. Avec une seule BD, un fichier pourrait vider les tables pendant qu'un autre s'en sert, et les tests échoueraient de façon imprévisible.
+
+### 7.2 Vider les tables entre les tests
+
+En mémoire, `Boite.vider()` remettait le tableau à zéro. Avec une BD, une requête SQL fait le même travail :
+
+```js
+// tests/outils-bd.js
+import { pool } from "../src/bd.js";
+
+// Vide les tables et remet les compteurs d'identifiants à 1.
+export async function viderTables() {
+  await pool.query("TRUNCATE boites RESTART IDENTITY");
+}
+```
+
+`TRUNCATE` supprime toutes les lignes d'un coup, et `RESTART IDENTITY` remet le compteur d'identifiants à 1. Chaque test peut ainsi compter sur une première boite d'identifiant 1, comme avec le modèle en mémoire.
+
+```js
+// tests/api.test.js : l'API complète, contre la BD de test
+import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import request from "supertest";
+import { app } from "../src/app.js";
+import { pool } from "../src/bd.js";
+import { viderTables } from "./outils-bd.js";
+
+beforeEach(() => viderTables());
+afterAll(() => pool.end());
+
+describe("API des boites", () => {
+  it("crée une boite, puis la retrouve", async () => {
+    const creation = await request(app).post("/boites").send({ nom: "Rangement", capacite: 10 });
+    expect(creation.status).toBe(201);
+
+    const lecture = await request(app).get(`/boites/${creation.body.id}`);
+    expect(lecture.status).toBe(200);
+    expect(lecture.body).toEqual({ id: 1, nom: "Rangement", capacite: 10 });
+  });
+
+  it("refuse un nom déjà utilisé", async () => {
+    await request(app).post("/boites").send({ nom: "Rangement", capacite: 10 });
+
+    const reponse = await request(app).post("/boites").send({ nom: "Rangement", capacite: 5 });
+
+    expect(reponse.status).toBe(409);
+  });
+
+  it("supprime une boite", async () => {
+    await request(app).post("/boites").send({ nom: "Rangement", capacite: 10 });
+
+    expect((await request(app).delete("/boites/1")).status).toBe(204);
+    expect((await request(app).get("/boites/1")).status).toBe(404);
+  });
+});
+```
+
+`afterAll` s'exécute une fois, après tous les tests du fichier. `pool.end()` y ferme les connexions du pool, qui resteraient sinon ouvertes.
+
+### 7.3 Ce que deviennent les tests existants
+
+Tous les tests de [Tester une API Express](/cours/06-express-4) ne sont pas touchés de la même façon :
+
+| Tests | Ce qui change |
+|---|---|
+| Règles de validation, fonctions pures | rien |
+| Middlewares testés avec des objets factices | rien |
+| Tests qui remplacent le service ou le modèle par un simulacre (`vi.mock`) | rien |
+| Tests qui utilisent le vrai modèle, avec `Boite.vider()` | ils échouent : `TypeError: Boite.vider is not a function` |
+| Tests d'intégration avec supertest | ils ont besoin de la BD de test |
+
+Pour les tests qui utilisaient `Boite.vider()`, deux choix se présentent. On peut remplacer l'appel par `viderTables()` : les tests interrogent alors la vraie BD, ce qui est plus réaliste, mais plus lent, et demande une connexion. On peut aussi remplacer le modèle par un simulacre, comme pour `chargerBoite` dans la fiche sur les tests : les tests restent rapides et isolés, mais ne vérifient plus les requêtes SQL. Dans bien des projets, on combine les deux : beaucoup de tests rapides avec des simulacres, et quelques tests contre une vraie BD pour les parcours principaux.
+
+<Checkpoint question="Un étudiant lance npm test, et découvre ensuite que ses boites de développement ont disparu. Quelle erreur de configuration explique ce résultat ?">
+Les tests se sont exécutés sur la BD de développement. Le plus probable est que .env.test n'existe pas ou contient la même chaine de connexion que .env, ou que la configuration de Vitest ne charge pas .env.test. Comme chaque test commence par vider les tables, les données de développement ont été effacées. D'où l'intérêt d'une BD réservée aux tests, et de vérifier sa chaine de connexion avant le premier lancement.
+</Checkpoint>
+
+## 8. Pour aller plus loin
+
+<MarginNote type="plusloin" titre="Les migrations">
+Ici, le schéma tient dans un seul fichier, exécuté à la main. Quand il évolue (une colonne ajoutée, une table renommée), 
+il faut appliquer le changement à chaque BD : développement, tests, production. Les **migrations** répondent à ce besoin : 
+chaque changement est un petit fichier SQL numéroté, et un outil applique dans l'ordre ceux qui ne l'ont pas encore été. Supabase offre cet outil dans sa ligne de commande ; il en existe aussi de nombreux autres.
+</MarginNote>
+
+
+{/* La fiche suivante, [Authentifier les utilisateurs d'une API](/notes/express-authentification), ajoute une table d'utilisateurs, et relie chaque boite à son propriétaire. */}

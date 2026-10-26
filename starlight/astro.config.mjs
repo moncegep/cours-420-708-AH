@@ -30,6 +30,8 @@ export default defineConfig({
 						{ label: "Middleware d'Express", slug: "cours/04-express-2" },
 						{ label: "Structurer une API Express", slug: "cours/05-express-3" },
 						{ label: "Tester une API Express", slug: "cours/06-express-4" },
+						{ label: "Base de données", slug: "cours/07-bd" },
+						// { label: "Authentification", slug: "cours/08-authentification" },
 					],
 				},
 				{

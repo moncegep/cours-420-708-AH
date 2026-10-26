@@ -1,0 +1,731 @@
+---
+title: "Authentifier les utilisateurs d'une API"
+description: "Ajouter des comptes à l'API des boites : distinguer identité, authentification et autorisation, stocker les mots de passe hachés dans la BD, émettre un jeton JWT à la connexion, protéger les routes avec les middlewares authentifier et exigerRole, relier chaque boite à son propriétaire, puis tester des routes protégées."
+---
+
+import MarginNote from "../../../components/MarginNote.astro";
+import Highlight from "../../../components/Highlight.astro";
+import Checkpoint from "../../../components/Checkpoint.astro";
+
+<MarginNote type="prerequis">
+Cette fiche poursuit [Brancher une base de données](/notes/express-bd) : l'API des boites y est connectée à une BD PostgreSQL. Elle met aussi en oeuvre les middlewares `authentifier` et `exigerRole`, dont la section 5 de [Les middlewares dans Express](/notes/express-middlewares) a donné le contrat.
+</MarginNote>
+
+Pour l'instant, n'importe qui peut lire, créer et supprimer n'importe quelle boite. On ajoute des comptes : chaque personne s'inscrit, se connecte, et ne voit que ses propres boites. Une personne qui a le rôle d'administrateur peut, en plus, consulter la liste des comptes.
+
+## 1. Identité, authentification, autorisation
+
+Trois notions reviennent dans toute la fiche, et il vaut la peine de bien les distinguer.
+
+<MarginNote type="definition" titre="Identité">
+Ce qui désigne un utilisateur de façon unique dans le système. Ici, un compte, repéré par son identifiant et son courriel.
+</MarginNote>
+
+<MarginNote type="definition" titre="Authentification">
+Le fait d'établir qui fait une requête, à partir d'une preuve : un mot de passe à la connexion, puis un jeton à chaque requête.
+</MarginNote>
+
+<MarginNote type="definition" titre="Autorisation">
+Le fait de décider si la personne authentifiée a le droit de faire ce qu'elle demande.
+</MarginNote>
+
+| | Question | En cas d'échec |
+|---|---|---|
+| Authentification | Qui fait cette requête ? | `401 Unauthorized` |
+| Autorisation | Cette personne a-t-elle le droit de faire ceci ? | `403 Forbidden` |
+
+Le nom du statut `401` prête à confusion : malgré « *Unauthorized* », il signale un échec d'**authentification**. La requête n'a pas fourni de preuve d'identité valide, et le client peut réessayer avec une preuve valide. Le `403` dit au contraire que l'identité est connue, mais que les droits manquent : réessayer avec la même identité ne changera rien.
+
+Le parcours d'un client se déroule en trois temps :
+
+1. **S'inscrire** une fois : `POST /comptes`, avec un courriel et un mot de passe.
+2. **Se connecter** : `POST /connexion`, avec les mêmes informations. L'API répond par un **jeton**.
+3. **Utiliser l'API** : chaque requête suivante porte ce jeton dans son en-tête `Authorization`. L'API n'a plus besoin du mot de passe.
+
+## 2. Les utilisateurs dans la BD
+
+Le schéma s'enrichit d'une table `utilisateurs`, et chaque boite reçoit un propriétaire :
+
+```sql
+-- bd/02-utilisateurs.sql
+CREATE TABLE utilisateurs (
+  id                  integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  courriel            text NOT NULL UNIQUE,
+  mot_de_passe_hache  text NOT NULL,
+  role                text NOT NULL DEFAULT 'membre' CHECK (role IN ('membre', 'admin'))
+);
+
+ALTER TABLE utilisateurs ENABLE ROW LEVEL SECURITY;
+
+-- Chaque boite appartient désormais à un utilisateur.
+-- Les boites existantes n'ont pas de propriétaire : on les supprime d'abord.
+TRUNCATE boites;
+
+ALTER TABLE boites
+  ADD COLUMN proprietaire_id integer NOT NULL REFERENCES utilisateurs (id),
+  DROP CONSTRAINT boites_nom_key,                -- le nom n'est plus unique pour tous...
+  ADD UNIQUE (proprietaire_id, nom);             -- ...mais pour chaque propriétaire
+```
+
+Exécutez ce fichier dans le SQL Editor de Supabase, sur la BD de développement **et** sur la BD de test.
+
+| Élément | Rôle |
+|---|---|
+| `courriel ... UNIQUE` | un seul compte par courriel |
+| `mot_de_passe_hache` | le mot de passe sous une forme qui ne permet pas de le retrouver (section 3) |
+| `role ... DEFAULT 'membre'` | un nouveau compte est un simple membre |
+| `CHECK (role IN (...))` | seuls deux rôles existent |
+| `REFERENCES utilisateurs (id)` | `proprietaire_id` doit désigner un utilisateur existant |
+| `UNIQUE (proprietaire_id, nom)` | deux boites d'une même personne ne peuvent pas porter le même nom |
+
+<MarginNote type="definition" titre="Clé étrangère">
+Une colonne dont la valeur doit correspondre à la clé primaire d'une ligne d'une autre table. Ici, `proprietaire_id` doit être l'`id` d'un utilisateur existant : la BD refuse une boite dont le propriétaire n'existe pas.
+</MarginNote>
+
+La contrainte d'unicité change de portée. Avant, deux boites ne pouvaient jamais porter le même nom ; désormais, Alex et Sam peuvent chacun avoir une boite « Outils ». Il serait d'ailleurs étrange qu'Alex se voie refuser un nom parce qu'une personne qu'il ne connait pas l'utilise déjà.
+
+<MarginNote type="attention" titre="TRUNCATE avant ALTER">
+Une boite existante n'a pas de propriétaire, et la nouvelle colonne exige une valeur : sans le `TRUNCATE`, la modification de la table serait refusée. En développement, perdre quelques boites d'essai est sans conséquence. Sur une BD qui contient de vraies données, on procéderait en plusieurs étapes : ajouter la colonne sans `NOT NULL`, attribuer un propriétaire à chaque boite, puis ajouter la contrainte.
+</MarginNote>
+
+## 3. Stocker un mot de passe
+
+Le serveur n'a jamais besoin de **retrouver** un mot de passe : il lui suffit de vérifier que celui qu'on lui présente est le bon. On ne stocke donc pas le mot de passe lui-même, mais le résultat d'un **hachage**.
+
+<MarginNote type="definition" titre="Hachage">
+Une fonction qui transforme une donnée en une suite de caractères de longueur fixe, appelée **valeur de hachage**. Elle donne toujours le même résultat pour la même donnée, et il est pratiquement impossible de retrouver la donnée à partir du résultat.
+</MarginNote>
+
+Pour vérifier un mot de passe, le serveur hache celui qu'on lui présente, et compare le résultat à la valeur stockée. Si quelqu'un lisait la table `utilisateurs`, il n'y trouverait pas les mots de passe eux-mêmes.
+
+On ajoute un **sel** avant de hacher.
+
+<MarginNote type="definition" titre="Sel">
+Une valeur aléatoire, différente pour chaque compte, ajoutée au mot de passe avant le hachage, et stockée avec le résultat. Deux comptes qui ont le même mot de passe obtiennent ainsi des valeurs de hachage différentes.
+</MarginNote>
+
+Le module `crypto`, intégré à Node, offre la fonction `scrypt`, conçue pour le hachage de mots de passe :
+
+```js
+// outils/mots-de-passe.js
+import { scrypt, randomBytes, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
+
+const scryptAsync = promisify(scrypt);   // version qui retourne une promesse
+
+// Retourne une chaine "sel:hachage", prête à être stockée dans la BD.
+export async function hacherMotDePasse(motDePasse) {
+  const sel = randomBytes(16).toString("hex");
+  const hachage = await scryptAsync(motDePasse, sel, 64);
+  return `${sel}:${hachage.toString("hex")}`;
+}
+
+// Hache le mot de passe reçu avec le même sel, puis compare les deux hachages.
+export async function verifierMotDePasse(motDePasse, stocke) {
+  const [sel, hachageAttendu] = stocke.split(":");
+  const hachage = await scryptAsync(motDePasse, sel, 64);
+  return timingSafeEqual(hachage, Buffer.from(hachageAttendu, "hex"));
+}
+```
+
+`hacherMotDePasse` tire un sel au hasard, hache, et retourne les deux réunis. `verifierMotDePasse` sépare le sel du hachage stocké, hache le mot de passe reçu avec ce même sel, et compare. `timingSafeEqual` compare deux suites d'octets ; c'est la fonction recommandée pour comparer des valeurs secrètes.
+
+Voici ce que contient la colonne pour un compte réel, tronqué : 32 caractères de sel, un deux-points, puis 128 caractères de hachage.
+
+```
+4045762ee693c2e6194290e0ec8c6439:3462f9f628093205d...
+```
+
+<MarginNote type="astuce" titre="Pourquoi scrypt, et pas un hachage ordinaire ?">
+Les fonctions de hachage ordinaires, comme SHA-256, sont conçues pour être rapides. Pour des mots de passe, c'est un défaut : quelqu'un qui obtiendrait la table pourrait essayer des milliards de mots de passe par seconde. `scrypt` est volontairement lent et gourmand en mémoire, ce qui rend ces essais en masse très couteux.
+</MarginNote>
+
+<MarginNote type="lien" titre="bcryptjs">
+Vous croiserez souvent la bibliothèque `bcryptjs`, qui joue le même rôle avec l'algorithme bcrypt. Elle gère le sel elle-même : `await bcrypt.hash(motDePasse, 10)` pour hacher, `await bcrypt.compare(motDePasse, stocke)` pour vérifier. Le choix de `scrypt` évite ici une dépendance.
+</MarginNote>
+
+## 4. L'inscription
+
+### 4.1 Les règles
+
+Deux nouvelles vérifications rejoignent `regles/verifications.js` :
+
+```js
+// regles/verifications.js
+export const estTexteNonVide = (v) => typeof v === "string" && v.trim() !== "";
+export const estEntierPositif = (v) => Number.isInteger(v) && v > 0;
+export const estCourriel = (v) => typeof v === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+export const aAuMoins = (n) => (v) => typeof v === "string" && v.length >= n;
+
+export const regle = (condition, message) => (v) => (condition(v) ? null : message);
+```
+
+`aAuMoins` est une fabrique, comme `regle` : `aAuMoins(8)` retourne une vérification qui exige au moins 8 caractères. La règle du courriel reste volontairement simple ; vérifier parfaitement un courriel par une expression régulière est très difficile, et l'usage est plutôt d'envoyer un message de confirmation à l'adresse.
+
+```js
+// regles/compte.js
+import { estCourriel, estTexteNonVide, aAuMoins, regle } from "./verifications.js";
+
+export const reglesInscription = {
+  courriel: regle(estCourriel, "courriel invalide"),
+  motDePasse: regle(aAuMoins(8), "au moins 8 caractères"),
+};
+
+export const reglesConnexion = {
+  courriel: regle(estTexteNonVide, "courriel requis"),
+  motDePasse: regle(estTexteNonVide, "mot de passe requis"),
+};
+```
+
+À la connexion, on vérifie seulement que les deux champs sont présents : un mot de passe trop court sera de toute façon refusé, puisqu'aucun compte n'a pu être créé avec un tel mot de passe.
+
+### 4.2 Le modèle
+
+```js
+// modeles/utilisateur.js
+import { pool } from "../bd.js";
+
+export const Utilisateur = {
+  async trouverParCourriel(courriel) {
+    const { rows } = await pool.query(
+      `SELECT id, courriel, mot_de_passe_hache AS "motDePasseHache", role
+       FROM utilisateurs WHERE courriel = $1`,
+      [courriel],
+    );
+    return rows[0] ?? null;
+  },
+
+  async creer({ courriel, motDePasseHache }) {
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO utilisateurs (courriel, mot_de_passe_hache) VALUES ($1, $2)
+         RETURNING id, courriel, role`,
+        [courriel, motDePasseHache],
+      );
+      return rows[0];
+    } catch (err) {
+      if (err.code === "23505") {
+        const doublon = new Error("courriel déjà utilisé");
+        doublon.status = 409;
+        throw doublon;
+      }
+      throw err;
+    }
+  },
+
+  async lister() {
+    const { rows } = await pool.query("SELECT id, courriel, role FROM utilisateurs ORDER BY id");
+    return rows;
+  },
+};
+```
+
+Deux détails méritent attention :
+
+1. `mot_de_passe_hache AS "motDePasseHache"` renomme la colonne dans le résultat. En SQL, l'usage est d'écrire les noms en minuscules séparées par des soulignés ; en JavaScript, en `camelCase`. Les guillemets sont nécessaires, sans quoi PostgreSQL mettrait le nom en minuscules.
+2. `creer` retourne `id, courriel, role`, jamais le mot de passe haché. C'est ce que l'API renverra au client.
+
+### 4.3 Le service, le contrôleur et les routes
+
+```js
+// services/comptes.js
+import { Utilisateur } from "../modeles/utilisateur.js";
+import { hacherMotDePasse, verifierMotDePasse } from "../outils/mots-de-passe.js";
+import { creerJeton } from "../outils/jetons.js";
+
+export async function inscrire({ courriel, motDePasse }) {
+  const motDePasseHache = await hacherMotDePasse(motDePasse);
+  return Utilisateur.creer({ courriel, motDePasseHache });   // { id, courriel, role }
+}
+
+export async function connecter({ courriel, motDePasse }) {
+  const utilisateur = await Utilisateur.trouverParCourriel(courriel);
+  const valide = utilisateur && (await verifierMotDePasse(motDePasse, utilisateur.motDePasseHache));
+  if (!valide) {
+    const err = new Error("identifiants invalides");
+    err.status = 401;
+    throw err;
+  }
+  return { jeton: creerJeton(utilisateur) };
+}
+
+export function listerUtilisateurs() {
+  return Utilisateur.lister();
+}
+```
+
+```js
+// controleurs/comptes.js
+import * as service from "../services/comptes.js";
+
+export async function inscrire(req, res) {
+  const utilisateur = await service.inscrire(req.body);
+  res.status(201).json(utilisateur);
+}
+
+export async function connecter(req, res) {
+  res.json(await service.connecter(req.body));
+}
+
+export async function listerUtilisateurs(req, res) {
+  res.json(await service.listerUtilisateurs());
+}
+```
+
+```js
+// routes/comptes.js
+import { Router } from "express";
+import * as controleur from "../controleurs/comptes.js";
+import { validerCorps } from "../intergiciels/validation.js";
+import { authentifier, exigerRole } from "../intergiciels/authentification.js";
+import { reglesInscription, reglesConnexion } from "../regles/compte.js";
+
+const routes = Router();
+
+routes.post("/comptes", validerCorps(reglesInscription), controleur.inscrire);
+routes.post("/connexion", validerCorps(reglesConnexion), controleur.connecter);
+routes.get("/admin/utilisateurs", authentifier, exigerRole("admin"), controleur.listerUtilisateurs);
+
+export default routes;
+```
+
+Dans `app.js`, ces routes se montent sans préfixe, puisque leurs chemins sont complets :
+
+```js
+// app.js
+import express from "express";
+import routesComptes from "./routes/comptes.js";
+import routesBoites from "./routes/boites.js";
+import { gererErreurs } from "./intergiciels/erreurs.js";
+
+export const app = express();
+
+app.use(express.json());
+app.use(routesComptes);
+app.use("/boites", routesBoites);
+app.use(gererErreurs);
+```
+
+Une inscription réussie répond :
+
+```
+POST /comptes   { "courriel": "alex@exemple.ca", "motDePasse": "secret123" }
+
+201  { "id": 1, "courriel": "alex@exemple.ca", "role": "membre" }
+```
+
+## 5. La connexion et le jeton
+
+### 5.1 Vérifier les identifiants
+
+`connecter`, dans le service ci-dessus, cherche le compte par son courriel, puis vérifie le mot de passe. Les deux échecs possibles, courriel inconnu ou mauvais mot de passe, donnent **la même réponse** : `401`, « identifiants invalides ». Un message différent dans chaque cas permettrait de savoir quels courriels ont un compte.
+
+### 5.2 Qu'est-ce qu'un JWT
+
+<MarginNote type="definition" titre="JWT (JSON Web Token)">
+Un format normalisé de jeton : une chaine en trois parties, séparées par des points, qui transporte des informations sur l'utilisateur et une signature qui garantit qu'elles n'ont pas été modifiées.
+</MarginNote>
+
+Voici un jeton réellement émis par l'API pour Alex :
+
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwicm9sZSI6Im1lbWJyZSIsImlhdCI6MTc5MzA0NTYwNCwiZXhwIjoxNzkzMDQ5MjA0fQ.up8iuRBw-zO9T29J5yDtriHaPA3fYu2sferKxC6y5lI
+```
+
+Les deux premières parties sont du JSON encodé en base64url, un encodage qui n'utilise que des caractères permis dans une URL. N'importe qui peut les décoder :
+
+| Partie | Contenu décodé | Rôle |
+|---|---|---|
+| En-tête | `{"alg":"HS256","typ":"JWT"}` | l'algorithme de signature |
+| Charge utile | `{"id":1,"role":"membre","iat":1793045604,"exp":1793049204}` | les informations transportées |
+| Signature | (des octets, sans contenu lisible) | la preuve que les deux premières parties sont intactes |
+
+`iat` (*issued at*) et `exp` (*expiration*) sont ajoutés par la bibliothèque : la date d'émission et la date d'expiration, en secondes depuis le 1er janvier 1970. Ici, une heure les sépare.
+
+La signature est calculée à partir de l'en-tête, de la charge utile et d'un **secret** que seul le serveur connait. Si quelqu'un modifie la charge utile, par exemple pour remplacer `"membre"` par `"admin"`, la signature ne correspond plus, et le serveur refuse le jeton. Sans le secret, on ne peut pas, en pratique, calculer une nouvelle signature valide.
+
+<Highlight couleur="ambre">Un JWT est signé, pas chiffré : tout le monde peut lire sa charge utile, mais qui ne connait pas le secret ne peut pas la modifier sans que le serveur s'en aperçoive.</Highlight>
+
+On n'y place donc que des informations qui peuvent être lues sans conséquence : un identifiant et un rôle, mais jamais de mot de passe.
+
+### 5.3 Émettre et lire un jeton
+
+La bibliothèque `jsonwebtoken` fait le travail :
+
+```bash
+npm install jsonwebtoken
+```
+
+```js
+// outils/jetons.js
+import jwt from "jsonwebtoken";
+
+const DUREE = "1h";
+
+export function creerJeton(utilisateur) {
+  return jwt.sign(
+    { id: utilisateur.id, role: utilisateur.role },   // la charge utile
+    process.env.JWT_SECRET,
+    { expiresIn: DUREE },
+  );
+}
+
+// Retourne { id, role } si le jeton est valide ; lève une erreur sinon.
+export function lireJeton(jeton) {
+  const { id, role } = jwt.verify(jeton, process.env.JWT_SECRET);
+  return { id, role };
+}
+```
+
+Le secret est une variable d'environnement, comme la chaine de connexion, ajoutée au fichier `.env` :
+
+```bash
+# .env
+DATABASE_URL=postgresql://...
+JWT_SECRET=une-longue-chaine-aleatoire-pour-le-developpement
+```
+
+Une longue chaine aléatoire convient ; on peut en produire une avec `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+
+`jwt.verify` vérifie la signature **et** la date d'expiration. Si l'une ou l'autre ne convient pas, il lève une erreur. Après une heure, le client doit donc se reconnecter pour obtenir un nouveau jeton.
+
+<MarginNote type="plusloin" titre="Le champ sub">
+La norme JWT prévoit un champ `sub` (*subject*) pour désigner l'utilisateur, sous forme de chaine. On utilise ici un champ `id`, plus lisible ; bien des API suivent plutôt la norme, avec `sub: String(utilisateur.id)`.
+</MarginNote>
+
+## 6. Protéger les routes
+
+### 6.1 Les deux middlewares
+
+On retrouve les middlewares dont [Les middlewares dans Express](/notes/express-middlewares) a donné le contrat, cette fois avec leur vraie implémentation :
+
+```js
+// intergiciels/authentification.js
+import { lireJeton } from "../outils/jetons.js";
+
+// Lit le jeton de l'en-tête Authorization: Bearer <jeton>, et pose req.utilisateur.
+export function authentifier(req, res, next) {
+  const [type, jeton] = (req.get("authorization") ?? "").split(" ");
+  if (type !== "Bearer" || !jeton) {
+    return res.status(401).json({ erreur: "jeton requis" });
+  }
+  try {
+    req.utilisateur = lireJeton(jeton);   // { id, role }
+  } catch {
+    return res.status(401).json({ erreur: "jeton invalide ou expiré" });
+  }
+  next();
+}
+
+export function exigerRole(role) {
+  return (req, res, next) => {
+    if (req.utilisateur?.role !== role) {
+      return res.status(403).json({ erreur: "accès interdit" });
+    }
+    next();
+  };
+}
+```
+
+Le client envoie son jeton dans l'en-tête `Authorization`, précédé du mot `Bearer` (« porteur ») :
+
+```
+GET /boites
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwi...
+```
+
+`authentifier` ne consulte pas la BD : le jeton contient déjà l'identifiant et le rôle, et sa signature garantit qu'ils n'ont pas été modifiés. Chaque requête protégée s'en trouve plus rapide, et n'importe quel service qui connait le secret peut vérifier le jeton.
+
+<MarginNote type="attention" titre="Le revers d'un jeton autonome">
+Puisque le jeton se suffit à lui-même, un changement fait dans la BD n'a pas d'effet sur un jeton déjà émis. Si un membre devient administrateur, son jeton actuel dit toujours `"membre"` : il doit se reconnecter pour obtenir le nouveau rôle. À l'inverse, un compte supprimé garde un jeton valide jusqu'à son expiration. C'est une des raisons pour lesquelles on donne aux jetons une durée de vie courte.
+</MarginNote>
+
+### 6.2 Monter les middlewares
+
+Dans `routes/boites.js`, une seule ligne protège toutes les routes des boites :
+
+```js
+// routes/boites.js
+import { Router } from "express";
+import * as controleur from "../controleurs/boites.js";
+import { verifierId, chargerBoite } from "../intergiciels/boites.js";
+import { validerCorps } from "../intergiciels/validation.js";
+import { authentifier } from "../intergiciels/authentification.js";
+import { reglesBoite } from "../regles/boite.js";
+
+const routes = Router();
+
+routes.use(authentifier);        // toutes les routes des boites exigent un jeton
+
+routes.get("/", controleur.lister);
+routes.post("/", validerCorps(reglesBoite), controleur.creer);
+routes.get("/:id", verifierId, chargerBoite, controleur.lire);
+routes.delete("/:id", verifierId, chargerBoite, controleur.supprimer);
+
+export default routes;
+```
+
+`routes.use(authentifier)` monte le middleware au début de toutes les routes de ce routeur. La route d'administration, elle, enchaine les deux middlewares, dans l'ordre imposé par leurs contrats : `authentifier`, puis `exigerRole("admin")`.
+
+Aucune route ne permet de devenir administrateur : on attribue ce rôle directement dans la BD, avec le SQL Editor.
+
+```sql
+UPDATE utilisateurs SET role = 'admin' WHERE courriel = 'alex@exemple.ca';
+```
+
+## 7. À chacun ses boites
+
+`authentifier` pose `req.utilisateur` ; il reste à s'en servir. Le contrôleur transmet l'identifiant de la personne connectée au service, qui le transmet au modèle :
+
+```js
+// controleurs/boites.js
+import * as service from "../services/boites.js";
+
+export async function lister(req, res) {
+  res.json(await service.listerBoites(req.utilisateur.id));
+}
+
+export async function creer(req, res) {
+  const { nom, capacite } = req.body;
+  const boite = await service.creerBoite({ nom, capacite, proprietaireId: req.utilisateur.id });
+  res.status(201).json(boite);
+}
+
+export function lire(req, res) {
+  res.json(req.boite);          // posé par chargerBoite
+}
+
+export async function supprimer(req, res) {
+  await service.supprimerBoite(req.boite.id);
+  res.status(204).end();
+}
+```
+
+```js
+// services/boites.js
+import { Boite } from "../modeles/boite.js";
+
+export function listerBoites(proprietaireId) {
+  return Boite.lister(proprietaireId);
+}
+
+export function trouverBoite(id, proprietaireId) {
+  return Boite.trouverParId(id, proprietaireId);
+}
+
+export async function creerBoite({ nom, capacite, proprietaireId }) {
+  if (await Boite.existeNom(nom, proprietaireId)) {
+    const err = new Error("nom déjà utilisé");
+    err.status = 409;
+    throw err;
+  }
+  return Boite.creer({ nom, capacite, proprietaireId });
+}
+
+export function supprimerBoite(id) {
+  return Boite.supprimer(id);
+}
+```
+
+Le modèle ajoute la condition sur le propriétaire à chaque requête. Par exemple :
+
+```js
+// modeles/boite.js (extrait)
+  // null si la boite n'existe pas, ou si elle appartient à quelqu'un d'autre
+  async trouverParId(id, proprietaireId) {
+    const { rows } = await pool.query(
+      "SELECT id, nom, capacite FROM boites WHERE id = $1 AND proprietaire_id = $2",
+      [id, proprietaireId],
+    );
+    return rows[0] ?? null;
+  },
+```
+
+`chargerBoite` passe à son tour `req.utilisateur.id` au service. Une boite qui appartient à quelqu'un d'autre est alors traitée comme une boite qui n'existe pas : la réponse est `404`.
+
+Pourquoi `404` plutôt que `403` ? Un `403` confirmerait que la boite existe, et qu'elle appartient à quelqu'un d'autre. Pour la personne connectée, les boites des autres n'existent tout simplement pas. Les deux choix se rencontrent en pratique : bien des API répondent `404` pour les ressources privées, et réservent `403` aux cas où la ressource est visible mais l'action interdite.
+
+<Highlight couleur="ambre">La règle de propriété ne s'écrit qu'une fois, dans les requêtes du modèle. `verifierId`, `validerCorps` et les contrôleurs `lire` et `supprimer` n'ont pas changé.</Highlight>
+
+<Checkpoint question="Sam connait l'identifiant d'une boite d'Alex, 12. Il envoie DELETE /boites/12 avec son propre jeton. Que se passe-t-il, et quel middleware l'a décidé ?">
+La réponse est 404, et la boite n'est pas supprimée. authentifier accepte le jeton de Sam et pose son identifiant sur req. verifierId accepte l'identifiant 12. C'est chargerBoite qui arrête la requête : il demande au service la boite 12 de Sam, le modèle ne trouve aucune ligne qui ait à la fois cet identifiant et ce propriétaire, et chargerBoite répond 404. Le contrôleur supprimer ne s'exécute jamais.
+</Checkpoint>
+
+## 8. Tester des routes protégées
+
+### 8.1 Préparer la BD de test
+
+Le fichier `.env.test` reçoit son propre secret :
+
+```bash
+# .env.test
+DATABASE_URL=postgresql://...
+JWT_SECRET=secret-des-tests
+```
+
+Le fichier d'outils de test vide désormais les deux tables, et offre une seconde fonction, `connecterUtilisateur` :
+
+```js
+// tests/outils-bd.js
+import { pool } from "../src/bd.js";
+import { creerJeton } from "../src/outils/jetons.js";
+
+// Vide les tables et remet les compteurs d'identifiants à 1.
+export async function viderTables() {
+  await pool.query("TRUNCATE boites, utilisateurs RESTART IDENTITY");
+}
+
+// Crée un utilisateur directement dans la BD, et retourne un jeton à son nom.
+// Le mot de passe n'est pas utilisé par ces tests : inutile de le hacher.
+export async function connecterUtilisateur(courriel, role = "membre") {
+  const { rows } = await pool.query(
+    `INSERT INTO utilisateurs (courriel, mot_de_passe_hache, role) VALUES ($1, 'sans objet', $2)
+     RETURNING id, role`,
+    [courriel, role],
+  );
+  return creerJeton(rows[0]);
+}
+```
+
+`connecterUtilisateur` crée un compte directement dans la BD, et fabrique un jeton à son nom, sans passer par l'inscription ni la connexion. Les tests des boites n'ont pas à vérifier l'inscription ; ils ont seulement besoin de personnes connectées. L'inscription et la connexion ont leurs propres tests.
+
+### 8.2 Les tests d'intégration
+
+```js
+// tests/boites.test.js : les boites et leur propriétaire, contre la BD de test
+import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import request from "supertest";
+import { app } from "../src/app.js";
+import { pool } from "../src/bd.js";
+import { viderTables, connecterUtilisateur } from "./outils-bd.js";
+
+let jetonAlex;
+let jetonSam;
+
+beforeEach(async () => {
+  await viderTables();
+  jetonAlex = await connecterUtilisateur("alex@exemple.ca");
+  jetonSam = await connecterUtilisateur("sam@exemple.ca");
+});
+afterAll(() => pool.end());
+
+// Envoie une requête au nom de la personne dont on donne le jeton.
+const au = (jeton) => ({
+  get: (url) => request(app).get(url).set("Authorization", `Bearer ${jeton}`),
+  post: (url, corps) => request(app).post(url).set("Authorization", `Bearer ${jeton}`).send(corps),
+});
+
+describe("API des boites, avec authentification", () => {
+  it("répond 401 sans jeton", async () => {
+    const reponse = await request(app).get("/boites");
+
+    expect(reponse.status).toBe(401);
+  });
+
+  it("ne liste que les boites de la personne connectée", async () => {
+    await au(jetonAlex).post("/boites", { nom: "Outils", capacite: 10 });
+    await au(jetonSam).post("/boites", { nom: "Jouets", capacite: 5 });
+
+    const reponse = await au(jetonAlex).get("/boites");
+
+    expect(reponse.body).toEqual([{ id: 1, nom: "Outils", capacite: 10 }]);
+  });
+
+  it("répond 404 pour la boite d'une autre personne", async () => {
+    await au(jetonAlex).post("/boites", { nom: "Outils", capacite: 10 });
+
+    const reponse = await au(jetonSam).get("/boites/1");
+
+    expect(reponse.status).toBe(404);
+  });
+
+  it("permet à deux personnes d'utiliser le même nom", async () => {
+    await au(jetonAlex).post("/boites", { nom: "Outils", capacite: 10 });
+
+    const reponse = await au(jetonSam).post("/boites", { nom: "Outils", capacite: 3 });
+
+    expect(reponse.status).toBe(201);
+  });
+});
+```
+
+La petite fonction `au(jeton)` évite de répéter `.set("Authorization", ...)` dans chaque test, et se lit naturellement : `au(jetonAlex).get("/boites")`.
+
+Chaque test vise une règle précise : le `401` sans jeton, la liste limitée à ses propres boites, le `404` pour la boite d'une autre personne, et la nouvelle portée de la contrainte d'unicité.
+
+### 8.3 Les tests unitaires
+
+Le middleware `authentifier` ne consulte pas la BD : on le teste sans elle, avec des objets factices, comme les middlewares de [Tester une API Express](/notes/express-tester).
+
+```js
+// tests/authentification.test.js : le middleware, sans BD
+import { describe, it, expect, vi } from "vitest";
+import jwt from "jsonwebtoken";
+import { authentifier } from "../src/intergiciels/authentification.js";
+import { creerJeton } from "../src/outils/jetons.js";
+import { fausseReponse } from "./outils.js";
+
+const requeteAvec = (entete) => ({ get: () => entete });
+
+describe("authentifier", () => {
+  it("pose l'utilisateur du jeton sur req et appelle next", () => {
+    const req = requeteAvec(`Bearer ${creerJeton({ id: 7, role: "membre" })}`);
+    const next = vi.fn();
+
+    authentifier(req, fausseReponse(), next);
+
+    expect(req.utilisateur).toEqual({ id: 7, role: "membre" });
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("répond 401 sans en-tête Authorization", () => {
+    const res = fausseReponse();
+    const next = vi.fn();
+
+    authentifier(requeteAvec(undefined), res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("répond 401 pour un jeton signé avec un autre secret", () => {
+    const faux = jwt.sign({ id: 7, role: "admin" }, "pas-le-bon-secret");
+    const res = fausseReponse();
+
+    authentifier(requeteAvec(`Bearer ${faux}`), res, vi.fn());
+
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  it("répond 401 pour un jeton expiré", () => {
+    const expire = jwt.sign({ id: 7, role: "membre" }, process.env.JWT_SECRET, { expiresIn: -10 });
+    const res = fausseReponse();
+
+    authentifier(requeteAvec(`Bearer ${expire}`), res, vi.fn());
+
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+});
+```
+
+`jwt.sign` permet de fabriquer les mauvais jetons qu'on veut refuser : signé avec un autre secret, ou déjà expiré (`expiresIn: -10` le fait expirer dix secondes avant sa création).
+
+Les fonctions de `mots-de-passe.js` se testent de la même façon, sans BD : un mot de passe correct est reconnu, un autre est refusé, et deux hachages du même mot de passe diffèrent, grâce au sel. Avec les tests de l'inscription et de la connexion, le projet compte 20 tests.
+
+<Checkpoint question="Les tests passent tous. On change ensuite la valeur de JWT_SECRET dans .env, puis on redémarre l'API. Que deviennent les jetons déjà remis aux clients ?">
+Ils sont tous refusés, avec une réponse 401. Leur signature a été calculée avec l'ancien secret ; jwt.verify la recalcule avec le nouveau, et les deux ne correspondent plus. Chaque client doit se reconnecter pour obtenir un jeton signé avec le nouveau secret. Changer le secret est d'ailleurs un moyen simple d'invalider tous les jetons d'un coup.
+</Checkpoint>
+
+## 9. Pour aller plus loin
+
+<MarginNote type="plusloin" titre="Sessions ou jetons">
+Avec une session, le serveur conserve l'état de la connexion, et le client ne renvoie qu'un identifiant, dans un cookie. Le serveur peut alors mettre fin à une session à tout moment, mais doit consulter son stockage à chaque requête. Les jetons autonomes évitent cette consultation, au prix des limites vues à la section 6.1. Les sessions sont fréquentes dans les applications web classiques, les jetons dans les API utilisées par des applications mobiles ou d'autres services.
+</MarginNote>
+
+<MarginNote type="plusloin" titre="Les jetons dans une architecture de microservices">
+Dans une architecture de microservices, il est courant qu'un seul service, le service d'authentification, vérifie les mots de passe et émette les jetons. Les autres services se contentent de vérifier les jetons qu'ils reçoivent, sans interroger le service d'authentification. On utilise alors souvent une signature **asymétrique** (par exemple l'algorithme RS256) : le service d'authentification signe avec une clé privée, que lui seul détient, et les autres vérifient avec une clé publique, qui ne permet pas de signer.
+</MarginNote>
+
+<MarginNote type="plusloin" titre="Se connecter avec Google">
+Les boutons « Se connecter avec Google » ou « avec Microsoft » reposent sur les protocoles OAuth 2.0 et OpenID Connect. L'API ne voit alors jamais le mot de passe : c'est le fournisseur qui authentifie la personne, puis remet à l'application un jeton qui atteste de son identité.
+</MarginNote>
